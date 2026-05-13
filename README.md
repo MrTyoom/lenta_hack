@@ -35,7 +35,46 @@ python photo_track.py
 
 ---
 
-### 2️⃣ Разметка видео
+### 2️⃣ Разметка изображений (для обучения YOLO)
+
+```bash
+python prepare_dataset.py "путь\к\папке\с\фото" --color-filter --output_folder dataset
+```
+
+**Пример:**
+```bash
+python prepare_dataset.py "C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\photo" --threshold 0.2 --text-threshold 0.15 --color-filter
+```
+
+**Параметры:**
+| Параметр | По умолчанию | Описание |
+|----------|--------------|----------|
+| `--threshold` | 0.2 | Box threshold (ниже = больше детекций) |
+| `--text-threshold` | 0.15 | Text threshold |
+| `--color-filter` | выключен | Фильтр по цвету (белый/красный/желтый) |
+| `--min-area` | 500 | Мин. площадь детекции |
+| `--train-split` | 0.8 | Доля train (80% train, 20% val) |
+| `--output_folder` | dataset | Папка для датасета |
+
+**Результат:**
+```
+dataset/
+├── data.yaml                 # Конфиг для YOLO
+├── images/
+│   ├── train/               # Изображения для обучения
+│   └── val/                 # Изображения для валидации
+└── labels/
+    ├── train/               # YOLO аннотации (.txt)
+    └── val/
+```
+
+---
+
+### 3️⃣ Разметка видео (для обучения YOLO)
+
+---
+
+### 3️⃣ Разметка видео (для обучения YOLO)
 
 #### Вариант A: Grounding DINO (авто-разметка для обучения)
 ```bash
@@ -98,7 +137,7 @@ DETECT_EVERY = 5  # Детекция каждые N кадров
 
 ---
 
-### 3️⃣ Обучение YOLO
+### 4️⃣ Обучение YOLO
 
 ```bash
 python train_yolo.py dataset --epochs 100 --batch 16
@@ -124,7 +163,7 @@ yolo_training/price_tag_yolo8n/
 
 ---
 
-### 4️⃣ Тестирование модели
+### 5️⃣ Тестирование модели
 
 ```bash
 # Веб-камера
@@ -141,7 +180,19 @@ python test_yolo.py yolo_training/price_tag_yolo8n/weights/best.pt --source "vid
 
 ## 📁 Пример полного цикла
 
-### Для фото:
+### Для фото (разметка для обучения):
+```bash
+# 1. Авто-разметка фото через Grounding DINO (создаёт YOLO датасет)
+python prepare_dataset.py "photo" --color-filter --output_folder dataset_photo
+
+# 2. Обучение модели
+python train_yolo.py dataset_photo --epochs 100 --batch 16
+
+# 3. Тест на фото через YOLO
+python photo_track.py
+```
+
+### Для фото (быстрая разметка без обучения):
 ```bash
 # 1. Авто-разметка фото через YOLO
 python photo_track.py
@@ -151,7 +202,7 @@ python photo_track.py
 
 ### Для видео с обучением:
 ```bash
-# 1. Подготовка датасета из видео
+# 1. Подготовка датасета из видео ИЛИ фото
 python prepare_dataset.py "data\Unlabeled" --interval 5 --color-filter --output_folder dataset
 
 # 2. Обучение (100 эпох)
@@ -162,6 +213,18 @@ python video_track.py
 
 # 4. Тест на веб-камере
 python test_yolo.py yolo_training/price_tags_v1/weights/best.pt --source 0
+```
+
+### Для изображений с обучением:
+```bash
+# 1. Подготовка датасета из изображений
+python prepare_dataset.py "photo" --color-filter --output_folder dataset
+
+# 2. Обучение модели
+python train_yolo.py dataset --epochs 100 --batch 16 --name price_tags_v1
+
+# 3. Разметка фото обученной моделью
+python photo_track.py
 ```
 
 ### Для готовых видео (без обучения):
@@ -178,8 +241,9 @@ python video_output1_track.py
 
 ### Если датасет маленький (< 100 изображений):
 ```bash
-# Подготовка - каждый кадр
+# Подготовка - каждый кадр (для видео) ИЛИ все фото (для изображений)
 python prepare_dataset.py "data\videos" --interval 1 --color-filter
+python prepare_dataset.py "photo" --color-filter
 
 # Обучение - больше эпох
 python train_yolo.py dataset --epochs 200 --batch 8
@@ -187,35 +251,46 @@ python train_yolo.py dataset --epochs 200 --batch 8
 
 ### Если датасет большой (> 1000 изображений):
 ```bash
-# Подготовка - каждый 10-й кадр
+# Подготовка - каждый 10-й кадр (для видео)
 python prepare_dataset.py "data\videos" --interval 10
 
-# Обучение - меньше эпох
-python train_yolo.py dataset --epochs 50 --batch 32
+# Для изображений - уменьшить пороги детекции
+python prepare_dataset.py "photo" --threshold 0.3 --min-area 800
 ```
 
 ### Если много ложных срабатываний:
 ```bash
-# Подготовка - выше пороги
+# Подготовка - выше пороги (для видео и фото)
 python prepare_dataset.py "data\videos" --threshold 0.3 --text-threshold 0.25 --min-area 800
-
-# YOLO детекция - выше CONF_THRESHOLD
-# В photo_track.py / video_track.py:
-CONF_THRESHOLD = 0.4
+python prepare_dataset.py "photo" --threshold 0.3 --min-area 800
 ```
 
 ### Если пропускает ценники:
 ```bash
-# Подготовка - ниже пороги
+# Подготовка - ниже пороги (для видео и фото)
 python prepare_dataset.py "data\videos" --threshold 0.15 --text-threshold 0.1 --min-area 300
-
-# YOLO детекция - ниже CONF_THRESHOLD
-CONF_THRESHOLD = 0.15
+python prepare_dataset.py "photo" --threshold 0.15 --min-area 300
 ```
 
 ---
 
 ## 📊 Формат данных
+
+### prepare_dataset.py (для обучения YOLO)
+
+**Вход:** Видео ИЛИ изображения  
+**Выход:** YOLO-датасет с аннотациями (.txt)
+
+```
+dataset/
+├── data.yaml                 # Конфиг для YOLO
+├── images/
+│   ├── train/               # Изображения для обучения
+│   └── val/                 # Изображения для валидации
+└── labels/
+    ├── train/               # YOLO аннотации (.txt)
+    └── val/
+```
 
 ### data.yaml
 ```yaml
@@ -301,6 +376,16 @@ pip install torch torchvision ultralytics transformers opencv-python scikit-lear
 | Время подготовки | ~5 мин |
 | Время обучения (100 эпох) | ~30 мин |
 
+Для папки с фото (50 изображений):
+
+| Параметр | Значение |
+|----------|----------|
+| Обработано фото | 50 |
+| Найдено ценников | ~200-300 |
+| Train/Val split | 40 / 10 |
+| Время подготовки | ~3 мин |
+| Время обучения (100 эпох) | ~15 мин |
+
 ---
 
 ## 💡 Советы
@@ -310,8 +395,9 @@ pip install torch torchvision ultralytics transformers opencv-python scikit-lear
 3. **Проверьте аннотации** — откройте несколько `.txt` файлов или detections.csv
 4. **Early stopping** — модель сама остановится, если нет улучшений (patience=50)
 5. **Аугментации** — YOLO автоматически применяет аугментации при обучении
-6. **DETET_EVERY** — увеличьте для ускорения обработки видео (каждый 10-20 кадр)
+6. **DETECT_EVERY** — увеличьте для ускорения обработки видео (каждый 10-20 кадр)
 7. **ROTATE** — включите если видео снято вертикально
+8. **prepare_dataset.py** — работает и с видео, и с изображениями
 
 ---
 
