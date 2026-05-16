@@ -11,7 +11,6 @@ def main():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     parser = argparse.ArgumentParser(description='Обучение YOLOv11n на детекцию ценников')
-    parser.add_argument('dataset_path', default= 'data', type=str, help='Путь к папке с датасетом (где data.yaml)')
     parser.add_argument('--epochs', type=int, default=100, help='Количество эпох')
     parser.add_argument('--batch', type=int, default=16, help='Размер батча')
     parser.add_argument('--imgsz', type=int, default=640, help='Размер изображения')
@@ -22,8 +21,8 @@ def main():
     parser.add_argument('--resume', type=str, default=None, help='Путь к чекпоинту для продолжения обучения')
     args = parser.parse_args()
 
-    dataset_path = Path(args.dataset_path)
-    data_yaml_path = dataset_path / 'data.yaml'
+    dataset_path = r"data"
+    data_yaml_path = Path(r"data\data.yaml")
 
     if not data_yaml_path.exists():
         print(f"❌ Файл data.yaml не найден: {data_yaml_path}")
