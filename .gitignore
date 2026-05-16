@@ -1,0 +1,66 @@
+# === ВИРТУАЛЬНОЕ ОКРУЖЕНИЕ ===
+venv/
+.venv/
+env/
+
+# === PYTHON КЭШ ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# === ДАННЫЕ И МЕДИА (можно перегенерировать) ===
+# Изображения
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+
+# Видео
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+
+# Excel и CSV
+*.xlsx
+*.xls
+*.csv
+
+# Pickle и бинарные файлы данных
+*.pkl
+*.bin
+*.pt
+
+# Базы данных
+*.db
+
+# === ПАПКИ С ДАННЫМИ ===
+data/
+TRAKING BBOX VIDEO AND PHOTO/
+test/
+# YOLO данные и результаты
+YOLO/data/
+YOLO/runs/
+YOLO/video_output/
+
+# Department Classification
+DEPARTMENT CLASSIFICATION/department/
+DEPARTMENT CLASSIFICATION/train_model/models/
+
+# LLM и VLM модели/данные
+LLMTEXT/bge-m3/
+VLM TEXT RECOGNIZER/AVITO/
+
+# === ОС ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo

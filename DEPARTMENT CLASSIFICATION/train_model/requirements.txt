@@ -1,0 +1,7 @@
+torch>=2.0.0
+torchvision>=0.15.0
+efficientnet-pytorch>=0.7.1
+albumentations>=1.3.0
+pillow>=9.0.0
+scikit-learn>=1.0.0
+numpy>=1.21.0

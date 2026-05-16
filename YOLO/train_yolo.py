@@ -10,15 +10,16 @@ def main():
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    parser = argparse.ArgumentParser(description='Обучение YOLOv8n на детекцию ценников')
-    parser.add_argument('dataset_path', type=str, help='Путь к папке с датасетом (где data.yaml)')
+    parser = argparse.ArgumentParser(description='Обучение YOLOv11n на детекцию ценников')
+    parser.add_argument('dataset_path', default= 'data', type=str, help='Путь к папке с датасетом (где data.yaml)')
     parser.add_argument('--epochs', type=int, default=100, help='Количество эпох')
     parser.add_argument('--batch', type=int, default=16, help='Размер батча')
     parser.add_argument('--imgsz', type=int, default=640, help='Размер изображения')
     parser.add_argument('--device', type=int, default=0, help='GPU device (0, 1, 2...)')
     parser.add_argument('--workers', type=int, default=4, help='Количество workers для загрузки данных')
-    parser.add_argument('--name', type=str, default='price_tag_yolo8n', help='Название эксперимента')
-    parser.add_argument('--pretrained', type=str, default='yolov8n.pt', help='Предобученная модель')
+    parser.add_argument('--name', type=str, default='price_tag_yolo26s', help='Название эксперимента')
+    parser.add_argument('--pretrained', type=str, default='yolo26s.pt', help='Предобученная модель')
+    parser.add_argument('--resume', type=str, default=None, help='Путь к чекпоинту для продолжения обучения')
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset_path)
@@ -49,6 +50,8 @@ def main():
     print(f"   Batch: {args.batch}")
     print(f"   Image size: {args.imgsz}")
     print(f"   Device: CUDA:{args.device}")
+    if args.resume:
+        print(f"   Resume: {args.resume}")
 
     results = model.train(
         data=str(data_yaml_path),
@@ -67,7 +70,8 @@ def main():
         amp=True,
         optimizer='auto',
         patience=50,
-        seed=42
+        seed=42,
+        resume=args.resume
     )
 
     print(f"\n{'='*50}")
