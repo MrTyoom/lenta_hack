@@ -22,8 +22,15 @@ MODEL_NAME = 'deepvk/USER-bge-m3'
 
 stop_words = {
     'шт', 'т', 'г', 'кг', 'л', 'мл', 'руб', 'цена', 'акция', 'скидка',
-    'россия', 'испания', 'германия', 'сух', 'кр', 'бел'
+    'россия', 'испания', 'германия'
 }
+
+TRANSLIT_MAP = str.maketrans({
+    'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M',
+    'Н': 'H', 'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X',
+    'а': 'a', 'в': 'b', 'е': 'e', 'к': 'k', 'м': 'm',
+    'н': 'h', 'о': 'o', 'р': 'p', 'с': 'c', 'т': 't', 'х': 'x',
+})
 
 
 HASH_TABLE_PATH = str(SCRIPT_DIR / 'name_hash_table.pkl')
@@ -32,6 +39,7 @@ HASH_TABLE_PATH = str(SCRIPT_DIR / 'name_hash_table.pkl')
 def normalize_text(t):
     t = re.sub(r'\b\d{3,5}\b', '', t)
     t = re.sub(r'\d+[,.]?\d*\s*%', '', t)
+    t = t.translate(TRANSLIT_MAP)
     t = re.sub(r'[^\w\sа-яА-Яa-zA-Z-]', ' ', t)
     t = re.sub(r'\s+', ' ', t)
     words = [w for w in t.lower().split() if w not in stop_words and len(w) > 1]
@@ -95,6 +103,7 @@ def init_search_indexes():
     conn = sqlite3.connect(DB_PATH)
     products_df = pd.read_sql('SELECT name, sku FROM site_products', conn)
     conn.close()
+    products_df['name_original'] = products_df['name']
 
     product_texts = products_df['name'].astype(str).tolist()
     print(f'Товаров: {len(product_texts)}')
@@ -162,9 +171,12 @@ def find_top5_matches(input_df: pd.DataFrame, ocr_col: str = 'ocr_text') -> pd.D
             candidates = []
             for idx in hash_table[query]:
                 name = products_df.iloc[idx]['name']
+                name_original = products_df.iloc[idx].get('name_original', '')
                 lev = Levenshtein.ratio(query, str(name).lower())
                 candidates.append({
+                    'idx': idx,
                     'name': name,
+                    'name_original': name_original,
                     'sku': products_df.iloc[idx]['sku'],
                     'score': round(0.5 + 0.5 * lev, 4)
                 })
@@ -182,10 +194,13 @@ def find_top5_matches(input_df: pd.DataFrame, ocr_col: str = 'ocr_text') -> pd.D
             for idx, score in zip(I[0], D[0]):
                 if idx < len(products_df) and bm25_scores[idx] > bm25_threshold:
                     name = products_df.iloc[idx]['name']
+                    name_original = products_df.iloc[idx].get('name_original', '')
                     lev_score = Levenshtein.ratio(query, str(name).lower())
                     combined = 0.4 * score + 0.3 * bm25_scores[idx] + 0.3 * lev_score
                     candidates.append({
+                        'idx': idx,
                         'name': name,
+                        'name_original': name_original,
                         'sku': products_df.iloc[idx]['sku'],
                         'score': combined
                     })
@@ -193,12 +208,23 @@ def find_top5_matches(input_df: pd.DataFrame, ocr_col: str = 'ocr_text') -> pd.D
             candidates.sort(key=lambda x: x['score'], reverse=True)
             top = candidates[:5]
 
+        for candidate in top:
+            ocr_lower = ocr_text.lower()
+            orig_lower = str(candidate['name_original']).lower() if candidate['name_original'] else ''
+            if orig_lower:
+                raw_lev = Levenshtein.ratio(ocr_lower, orig_lower)
+                candidate['final_score'] = 0.7 * candidate['score'] + 0.3 * raw_lev
+            else:
+                candidate['final_score'] = candidate['score']
+
+        top.sort(key=lambda x: x['final_score'], reverse=True)
+
         match = {}
         for i in range(1, 6):
             if i <= len(top):
                 match[f'top{i}'] = top[i - 1]['name']
                 match[f'top{i}_sku'] = top[i - 1]['sku']
-                match[f'top{i}_score'] = round(top[i - 1]['score'], 4)
+                match[f'top{i}_score'] = round(top[i - 1]['final_score'], 4)
             else:
                 match[f'top{i}'] = None
                 match[f'top{i}_sku'] = None

@@ -1,5 +1,5 @@
 main_extraction:
-  input_folder: "data/49_5"
+  input_folder: "data/25_12-20"
   output_folder: "data/extracted_crops"
   model_path: "models/best.pt"
   min_crop_width: 50
