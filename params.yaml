@@ -1,0 +1,21 @@
+main_extraction:
+  input_folder: "data/video1/25_12-20"
+  output_folder: "data/extracted_crops"
+  model_path: "models/best.pt"
+  min_crop_width: 50
+  min_crop_height: 50
+  sharpness_threshold: 50.0
+  top_k: 10
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  rotate_frames: True
+  tracker_config: "bytetrack.yaml"
+
+top_k_crops:
+  input_folder: "data/extracted_crops"
+  output_folder: "data/final_result"
+
+ocr:
+  input_folder: "data/final_result"
+  cpu_threads: 12 # os.cpu_coint()
+  text_recognition_batch_size: 32
