@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+best_crops.py
 
 # === ДАННЫЕ И МЕДИА (можно перегенерировать) ===
 # Изображения
@@ -41,6 +42,7 @@ __pycache__/
 data/
 TRAKING BBOX VIDEO AND PHOTO/
 test/
+
 # YOLO данные и результаты
 YOLO/data/
 YOLO/runs/
@@ -52,7 +54,8 @@ DEPARTMENT CLASSIFICATION/train_model/models/
 
 # LLM и VLM модели/данные
 LLMTEXT/bge-m3/
-VLM TEXT RECOGNIZER/AVITO/
+VLM MODULE/AVITO/
+vlm_select/
 
 # === ОС ===
 .DS_Store

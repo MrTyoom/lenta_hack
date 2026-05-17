@@ -24,10 +24,11 @@ import time
 
 # Конфигурация
 DB_PATH = r"lenta_products.db"
-MODEL_PATH = r"LLMTEXT/bge-m3"
-FAISS_INDEX_PATH = r"LLMTEXT/faiss_index.bin"
-PRODUCTS_CACHE_PATH = r"LLMTEXT/products_cache.pkl"
-BM25_CACHE_PATH = r"LLMTEXT/bm25_cache.pkl"
+SCRIPT_DIR = Path(__file__).parent.absolute()
+MODEL_PATH = str(SCRIPT_DIR / "bge-m3")
+FAISS_INDEX_PATH = str(SCRIPT_DIR / "faiss_index.bin")
+PRODUCTS_CACHE_PATH = str(SCRIPT_DIR / "products_cache.pkl")
+BM25_CACHE_PATH = str(SCRIPT_DIR / "bm25_cache.pkl")
 
 TOP_K_CANDIDATES = 20
 TOP_K_FINAL = 5
@@ -117,7 +118,8 @@ class HybridSearch:
         conn.close()
     
     def _get_from_cache(self, ocr_text):
-        text_hash = hashlib.md5(ocr_text.encode()).hexdigest()
+        normalized = self.normalizer.normalize(ocr_text)
+        text_hash = hashlib.md5(normalized.encode()).hexdigest()
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -143,7 +145,8 @@ class HybridSearch:
         return None
     
     def _save_to_cache(self, ocr_text, result):
-        text_hash = hashlib.md5(ocr_text.encode()).hexdigest()
+        normalized = self.normalizer.normalize(ocr_text)
+        text_hash = hashlib.md5(normalized.encode()).hexdigest()
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
