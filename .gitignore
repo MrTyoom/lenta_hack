@@ -54,6 +54,7 @@ DEPARTMENT CLASSIFICATION/train_model/models/
 
 # LLM и VLM модели/данные
 LLMTEXT/bge-m3/
+LLMTEXT/LLMTEXT/bge-m3/
 bge-m3
 VLM MODULE/AVITO/
 vlm_select/
