@@ -42,20 +42,17 @@ best_crops.py
 data/
 TRAKING BBOX VIDEO AND PHOTO/
 test/
-
+runs/
+video_output/
+models/
 # YOLO данные и результаты
 YOLO_MODULE/
-YOLO_MODULE/data/
-YOLO_MODULE/runs/
-YOLO_MODULE/video_output/
+
 
 # Department Classification
 DEPARTMENT CLASSIFICATION/department/
-DEPARTMENT CLASSIFICATION/train_model/models/
 
 
-MAIN_MODULE/data/
-MAIN_MODULE/models/
 # LLM и VLM модели/данные
 LLMTEXT/bge-m3/
 LLMTEXT/LLMTEXT/bge-m3/
