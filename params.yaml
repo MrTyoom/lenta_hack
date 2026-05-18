@@ -14,12 +14,13 @@ main_extraction:
 department_classifier: #Определение отдела
   model_path: "DEPARTMENT_CLASSIFICATION/train_model/models/best_model.pth"
 
+quality_classifier:
+  model_path: "CROP_QUALITY_CLASSIFICATION/quality_classifier/models/best_model.pth"
+  input_folder: "data/final_result"
 
 top_k_crops:
   input_folder: "data/extracted_crops"
   output_folder: "data/final_result"
-
-
 
 ocr:
   input_folder: "data/final_result"

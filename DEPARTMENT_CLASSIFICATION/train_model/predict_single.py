@@ -5,6 +5,7 @@
 import torch
 from PIL import Image
 import numpy as np
+import cv2
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from pathlib import Path
@@ -68,6 +69,44 @@ class DepartmentPredictor:
         
         # Применяем трансформации
         transformed = self.transform(image=image_np)
+        image_tensor = transformed['image'].unsqueeze(0).to(self.device)
+        
+        # Предсказание
+        with torch.no_grad():
+            outputs = self.model(image_tensor)
+            probabilities = torch.softmax(outputs, dim=1)[0]
+        
+        # Топ-K предсказаний
+        top_probs, top_indices = torch.topk(probabilities, top_k)
+        
+        results = []
+        for prob, idx in zip(top_probs, top_indices):
+            class_name = self.class_names[idx.item()]
+            results.append((class_name, prob.item() * 100))
+        
+        return results
+    
+    def predict_np(self, img, top_k=3):
+        """
+        Предсказать класс для numpy array (кадр из видео)
+        
+        Args:
+            img: numpy array (BGR или RGB)
+            top_k: Количество лучших предсказаний
+        
+        Returns:
+            Список кортежей (class_name, probability)
+        """
+        # Конвертация в RGB
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        elif img.shape[2] == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+        elif img.shape[2] == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # Применяем трансформации
+        transformed = self.transform(image=img)
         image_tensor = transformed['image'].unsqueeze(0).to(self.device)
         
         # Предсказание

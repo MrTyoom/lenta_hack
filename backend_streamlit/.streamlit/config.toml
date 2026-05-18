@@ -1,0 +1,6 @@
+[server]
+maxUploadSize = 2048 # Увеличиваем максимальный размер файла до 2 ГБ
+maxMessageSize = 500 # Увеличиваем размер кванта передачи по веб-сокетам (по дефолту 20)
+
+[browser]
+gatherUsageStats = false
