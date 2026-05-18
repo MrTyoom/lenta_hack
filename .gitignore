@@ -56,6 +56,7 @@ DEPARTMENT CLASSIFICATION/department/
 # LLM и VLM модели/данные
 LLMTEXT/bge-m3/
 LLMTEXT/LLMTEXT/bge-m3/
+**/bge-m3/
 bge-m3
 VLM_MODULE/AVITO/
 vlm_select/
