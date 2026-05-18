@@ -44,9 +44,10 @@ TRAKING BBOX VIDEO AND PHOTO/
 test/
 
 # YOLO данные и результаты
-YOLO/data/
-YOLO/runs/
-YOLO/video_output/
+YOLO_MODULE/
+YOLO_MODULE/data/
+YOLO_MODULE/runs/
+YOLO_MODULE/video_output/
 
 # Department Classification
 DEPARTMENT CLASSIFICATION/department/
@@ -56,7 +57,7 @@ DEPARTMENT CLASSIFICATION/train_model/models/
 LLMTEXT/bge-m3/
 LLMTEXT/LLMTEXT/bge-m3/
 bge-m3
-VLM MODULE/AVITO/
+VLM_MODULE/AVITO/
 vlm_select/
 
 # === ОС ===

@@ -106,11 +106,12 @@ def init_search_indexes():
     products_df['name_original'] = products_df['name']
 
     product_texts = products_df['name'].astype(str).tolist()
+    product_texts_normalized = [normalize_text(t) for t in product_texts]
     print(f'Товаров: {len(product_texts)}')
 
     print('Создание эмбеддингов...')
     embeddings = model.encode(
-        product_texts,
+        product_texts_normalized,
         batch_size=64,
         show_progress_bar=True,
         normalize_embeddings=True
