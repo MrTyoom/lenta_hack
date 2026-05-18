@@ -86,9 +86,12 @@ def parse_response(raw_text):
 
 
 def get_configs():
-    q = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True)
+    q = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True, llm_int8_enable_fp32_cpu_offload=True)
+    q8 = BitsAndBytesConfig(load_in_8bit=True, llm_int8_enable_fp32_cpu_offload=True)
     return {
-        "4-bit NF4": {"model_kwargs": {"quantization_config": q, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 512}},
+        "4-bit NF4": {"model_kwargs": {"quantization_config": q, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512}},
+        "High Quality": {"model_kwargs": {"quantization_config": q, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512, "do_sample": False, "temperature": 0.1}, "vision_kwargs": {"min_pixels": 4*28*28, "max_pixels": 2048*28*28}},
+        "High Quality 8-bit": {"model_kwargs": {"quantization_config": q8, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512, "do_sample": False, "temperature": 0.1}, "vision_kwargs": {"min_pixels": 4*28*28, "max_pixels": 2048*28*28}},
         "Fast-64": {"model_kwargs": {"dtype": torch.float16, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 64}},
         "Fast-128": {"model_kwargs": {"dtype": torch.float16, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 128}},
     }
@@ -117,7 +120,8 @@ def vlm_predict_crops(crops_df, model, processor, config_name="4-bit NF4"):
     for idx, row in crops_df.iterrows():
         crop_array = row['crop_array']
         img = Image.fromarray(cv2.cvtColor(crop_array, cv2.COLOR_BGR2RGB))
-        messages = [{"role": "user", "content": [{"type": "image", "image": img, "min_pixels": 4*28*28, "max_pixels": 1024*28*28}, {"type": "text", "text": PROMPT}]}]
+        vk = cp.get("vision_kwargs", {"min_pixels": 4*28*28, "max_pixels": 1024*28*28})
+        messages = [{"role": "user", "content": [{"type": "image", "image": img, **vk}, {"type": "text", "text": PROMPT}]}]
         chat_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(text=[chat_text], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt").to("cuda")
@@ -127,6 +131,7 @@ def vlm_predict_crops(crops_df, model, processor, config_name="4-bit NF4"):
         parsed = parse_response(raw)
         result = {k: v for k, v in row.items() if k != 'crop_array'}
         result.update(parsed)
+        result['raw_text'] = raw
         results_rows.append(result)
         if (idx + 1) % 5 == 0:
             print(f"  OCR [{idx+1}/{len(crops_df)}]")
