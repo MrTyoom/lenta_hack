@@ -163,6 +163,8 @@ class SqliteSessionRepository(SessionRepository):
                     department TEXT,
                     department_prob REAL,
                     track_id INTEGER,
+                    SYS_trash INTEGER,
+                    SYS_quality_confidence REAL,
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
                 )
             """)
@@ -193,13 +195,15 @@ class SqliteSessionRepository(SessionRepository):
                         session_id, filename, product_name, price_default, price_card, price_discount,
                         barcode, discount_amount, id_sku, print_datetime, code, additional_info,
                         color, special_symbols, frame_timestamp, x_min, y_min, x_max, y_max,
-                        qr_code_barcode, price1_qr, is_problematic, department, department_prob, track_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        qr_code_barcode, price1_qr, is_problematic, department, department_prob, track_id,
+                        SYS_trash, SYS_quality_confidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     session_id, row['filename'], row['product_name'], row['price_default'], row['price_card'], row['price_discount'],
                     row['barcode'], row['discount_amount'], row['id_sku'], row['print_datetime'], row['code'], row['additional_info'],
                     row['color'], row['special_symbols'], row['frame_timestamp'], row['x_min'], row['y_min'], row['x_max'], row['y_max'],
-                    row['qr_code_barcode'], row['price1_qr'], row['is_problematic'], row['department'], row['department_prob'], row['track_id']
+                    row['qr_code_barcode'], row['price1_qr'], row['is_problematic'], row['department'], row['department_prob'], row['track_id'],
+                    1 if row.get('SYS_trash', False) else 0, row.get('SYS_quality_confidence', 0.0)
                 ))
             conn.commit()
             return session_id

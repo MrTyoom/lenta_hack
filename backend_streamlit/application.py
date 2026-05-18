@@ -5,6 +5,8 @@ from pathlib import Path
 # Add paths for modules BEFORE any other imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "MAIN_MODULE" / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "DEPARTMENT_CLASSIFICATION" / "train_model"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "CROP_QUALITY_CLASSIFICATION"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "IMG PREPROCESSING"))
 
 import time
 import gc
@@ -19,6 +21,8 @@ from omegaconf import OmegaConf
 from domain import PriceTag, SessionStats, CropCandidate
 from crop_extraction import CropScorer
 from predict_single import DepartmentPredictor
+from quality_classifier.predict import quality_classifier
+from color_classifier import process_dataset
 
 
 class ProgressListener(ABC):
@@ -87,6 +91,9 @@ class ProcessVideoUseCase:
         class_names_path = Path(__file__).parent.parent / "DEPARTMENT_CLASSIFICATION/train_model/models/class_names.json"
         self.classifier = DepartmentClassifier(str(dept_model_path), str(class_names_path))
         
+        quality_model_path = Path(__file__).parent.parent / config.quality_classifier.model_path
+        self.quality_model_path = str(quality_model_path)
+        
         self.config = config
         self.best = defaultdict(list)
         self.seg_preds = [[] for _ in range(5)]
@@ -130,10 +137,6 @@ class ProcessVideoUseCase:
             
             fi += 1
             
-            # Поворот
-            if config.main_extraction.rotate_frames:
-                frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            
             # YOLO track с persist=True
             res = self.detector.track(frame, persist=True)
             
@@ -174,6 +177,14 @@ class ProcessVideoUseCase:
         
         self.video_reader.close()
         
+        # Классификация качества и цвета
+        crops_for_quality = [(track_id, candidates[0].crop) 
+                             for track_id, candidates in self.best.items() 
+                             if candidates]
+        
+        trash_map, confidence_map = quality_classifier(self.quality_model_path, crops_for_quality)
+        color_results = process_dataset(crops_for_quality)
+        
         # Собрать результаты
         rows_crops = []
         for track_id, candidates in self.best.items():
@@ -191,12 +202,18 @@ class ProcessVideoUseCase:
                 dept_mode = Counter(track_depts).most_common(1)[0][0] if track_depts else "Не определён"
                 dept_prob = (Counter(track_depts).most_common(1)[0][1] / len(track_depts) * 100) if track_depts else 0.0
                 
+                is_trash = trash_map.get(track_id, False)
+                quality_conf = confidence_map.get(track_id, 0.0)
+                crop_color = color_results.get(track_id, "white")
+                
                 rows_crops.append({
                     'filename': os.path.basename(video_path),
                     'SYS_track_id': track_id,
                     'SYS_rank': rank + 1,
                     'SYS_score': round(c.score, 1),
                     'SYS_confidence': round(c.confidence, 3),
+                    'SYS_trash': is_trash,
+                    'SYS_quality_confidence': round(quality_conf, 1),
                     'product_name': "Товар (OCR будет позже)",
                     'price_default': 0.0,
                     'price_card': 0.0,
@@ -207,7 +224,7 @@ class ProcessVideoUseCase:
                     'print_datetime': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'code': 1,
                     'additional_info': f"conf={c.confidence:.2f}",
-                    'color': "нет",
+                    'color': crop_color,
                     'special_symbols': "нет",
                     'frame_timestamp': int(c.frame_index / self.video_fps * 1000),
                     'x_min': c.bbox[0],
@@ -216,10 +233,11 @@ class ProcessVideoUseCase:
                     'y_max': c.bbox[3],
                     'qr_code_barcode': 0,
                     'price1_qr': 0.0,
-                    'is_problematic': 0,
+                    'is_problematic': 1 if is_trash else 0,
                     'department': dept_mode,
                     'department_prob': dept_prob,
                     'track_id': track_id,
+                    'crop_image': c.crop,
                 })
         
         # Вычислить mode department для всего видео
