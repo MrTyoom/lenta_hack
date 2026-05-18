@@ -14,17 +14,15 @@ class CameraSettings:
 
 
 class DistortionCorrector:
-    def __init__(self, cameraSettings: CameraSettings, distortionCoeffs: list, alpha=1.0):
+    def __init__(self, cameraSettings: CameraSettings, distortionCoeffs: list):
         self.width = cameraSettings.imageSize[0]
         self.height = cameraSettings.imageSize[1]
         self.diagonal_mm = cameraSettings.diagonalMm
         self.focal_length_mm = cameraSettings.focalLenMm
         self.dist = np.array(distortionCoeffs, dtype=np.float32)
         self.K = self._calculate_camera_matrix()
-        # alpha=1.0 сохраняет все пиксели (могут быть чёрные области)
-        # alpha=0.0 обрезает до ROI (нет чёрных областей, но меньше поле зрения)
         self.new_cam_matrix, self.roi = cv2.getOptimalNewCameraMatrix(
-            self.K, self.dist, (self.width, self.height), alpha, (self.width, self.height)
+            self.K, self.dist, (self.width, self.height), 0, (self.width, self.height)
         )
         self.roi_x, self.roi_y, self.roi_w, self.roi_h = self.roi
         self.map1, self.map2 = cv2.initUndistortRectifyMap(
@@ -44,17 +42,10 @@ class DistortionCorrector:
             [0, 0, 1]
         ], dtype=np.float32)
 
-    def undistort_frame(self, frame: np.ndarray, crop_to_roi=False) -> np.ndarray:
-        """
-        frame: исходное изображение
-        crop_to_roi: если True, обрезать до ROI (нет чёрных областей)
-                     если False, сохранить весь фрейм (могут быть чёрные области)
-        """
+    def undistort_frame(self, frame: np.ndarray) -> np.ndarray:
         undistorted = cv2.remap(frame, self.map1, self.map2, cv2.INTER_LINEAR)
-        if crop_to_roi:
-            return undistorted[self.roi_y:self.roi_y + self.roi_h,
-                               self.roi_x:self.roi_x + self.roi_w]
-        return undistorted
+        return undistorted[self.roi_y:self.roi_y + self.roi_h,
+                           self.roi_x:self.roi_x + self.roi_w]
 
     def undistort_bbox(self, bbox: tuple) -> tuple:
         x_min, y_min, x_max, y_max = bbox
