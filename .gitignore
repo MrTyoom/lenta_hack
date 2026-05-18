@@ -53,6 +53,9 @@ YOLO_MODULE/video_output/
 DEPARTMENT CLASSIFICATION/department/
 DEPARTMENT CLASSIFICATION/train_model/models/
 
+
+MAIN_MODULE/data/
+MAIN_MODULE/models/
 # LLM и VLM модели/данные
 LLMTEXT/bge-m3/
 LLMTEXT/LLMTEXT/bge-m3/
