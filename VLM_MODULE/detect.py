@@ -105,14 +105,48 @@ def collect_images_by_folder(crops_dir):
         print(f"  {fname}: {len(imgs)} images")
     return folders
 
+FIELD_NAMES_SET = {
+    'product_name', 'price_without_card', 'price_with_card', 'promo_price',
+    'barcode', 'discount_size', 'article', 'layout_code', 'print_date',
+    'product name', 'price without card', 'price with card', 'promo price',
+    'discount size', 'layout code', 'print date',
+    'продукт_название', 'шифр', 'цена_без_карты', 'цена_с_картой',
+    'акционная_цена', 'размер_скидки', 'размер_скидаки', 'артикул',
+    'код_расположению', 'код_расположение', 'дата_печати',
+    'продукт название', 'цена без карты', 'цена с картой',
+    'акционная цена', 'размер скидки', 'размер скидаки',
+    'код расположению', 'код расположение', 'дата печати',
+}
+
+ARTICLE_STUBS = {'12345_678', '98765_432', '55555_333', '11111_222', '421'}
+
+BARCODE_STUBS = {'4600000123456', '4600000888777', '4607000001234', '4600123456789', '4210000000000'}
+
+
+def _is_field_name(val):
+    if not val:
+        return True
+    return val.strip().lower() in {f.lower() for f in FIELD_NAMES_SET}
+
+
+def _is_article_stub(val):
+    if not val:
+        return True
+    return val.strip() in ARTICLE_STUBS
+
+
+def _is_barcode_stub(val):
+    if not val:
+        return True
+    return val.strip() in BARCODE_STUBS
+
+
 def parse_response(raw_text):
     fields = {'product_name': '', 'price_without_card': '', 'price_with_card': '', 'promo_price': '', 'barcode': '', 'discount_size': '', 'article': '', 'layout_code': '', 'print_date': ''}
     
-    # 1. Удаление служебных токенов
     cleaned = re.sub(r'<\|im_start\|>|<\|im_end\|>|<\|vision_start\|>|<\|vision_end\|>', '', raw_text)
     cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', cleaned)
     
-    # 2. Удаление русских объяснений (ключевые фразы)
     noise_patterns = [
         r'На\s+изображении\s+представлен[ао]?\s*\.?',
         r'Внимательно\s+изучив\s+изображение',
@@ -127,55 +161,68 @@ def parse_response(raw_text):
     for pattern in noise_patterns:
         cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
     
-    # 3. Удаление строк которые НЕ содержат <>
     lines = cleaned.split('\n')
     data_lines = [line for line in lines if '<>' in line]
     if not data_lines:
         return fields
     
-    # 4. Берём первую строку с <>
     data_line = data_lines[0].strip()
     
-    # 5. Парсинг полей
     parts = data_line.split('<>')
     field_names = list(fields.keys())
+    
+    header_detected = _is_field_name(parts[0].strip()) if parts else False
     
     for i, part in enumerate(parts):
         if i >= len(field_names):
             break
         value = part.strip()
         
-        # Удаляем префиксы типа "product_name:" из значения
         if ':' in value and i > 0:
             value = value.split(':', 1)[1].strip()
         
-        # Фильтруем мусор
-        if value and value.lower() in ['not found', 'none', 'n/a', '-', '']:
+        if value and value.lower() in ['not found', 'none', 'n/a', '-']:
             value = ''
         
-        # Проверяем что значение похоже на данные а не текст
-        if i == 0 and len(value) > 50:
-            value = value[:50]
+        if _is_field_name(value):
+            value = ''
+        
+        if i == 0 and len(value) > 100:
+            value = value[:100]
         
         fields[field_names[i]] = value
     
-    # 6. Дочистка article
-    if not fields['article']:
-        m = re.search(r'(\d+_\d+)', data_line)
-        if m:
-            fields['article'] = m.group(1)
+    if header_detected and not fields['product_name']:
+        for line in data_lines[1:]:
+            extra = line.strip()
+            if '<>' in extra:
+                extra_parts = extra.split('<>')
+                for p in extra_parts:
+                    p = p.strip()
+                    if p and not _is_field_name(p) and not re.match(r'^[\d.,%-]+$', p):
+                        fields['product_name'] = p
+                        break
+            elif extra and not _is_field_name(extra) and not re.match(r'^[\d.,%-]+$', extra):
+                fields['product_name'] = extra
+                break
     
-    # 7. Дочистка barcode
-    if not fields['barcode']:
+    if not fields['article'] or _is_article_stub(fields['article']):
+        fields['article'] = ''
+    
+    if not fields['barcode'] or _is_barcode_stub(fields['barcode']):
         m = re.search(r'\b(\d{8,14})\b', data_line)
-        if m:
+        if m and not _is_barcode_stub(m.group(1)):
             fields['barcode'] = m.group(1)
+        elif _is_barcode_stub(fields['barcode']):
+            fields['barcode'] = ''
     
-    # 8. Дочистка discount_size
     if fields['discount_size']:
         m = re.search(r'(-?\d+)%', fields['discount_size'])
         if m:
             fields['discount_size'] = f"{m.group(1)}%"
+    
+    for key in fields:
+        fields[key] = fields[key].replace('<0x0A>', ' ').replace('▁', ' ').strip()
     
     return fields
 

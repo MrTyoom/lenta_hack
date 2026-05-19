@@ -2,16 +2,19 @@ import os
 import sys
 from pathlib import Path
 
-# Add paths for modules BEFORE any other imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "MAIN_MODULE" / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "DEPARTMENT_CLASSIFICATION" / "train_model"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "CROP_QUALITY_CLASSIFICATION"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "IMG PREPROCESSING"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "VLM_MODULE"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "LLMTEXT"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "VRAM_CLEAN"))
 
 import time
 import gc
 import torch
 import cv2
+import pandas as pd
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
@@ -23,6 +26,10 @@ from crop_extraction import CropScorer
 from predict_single import DepartmentPredictor
 from quality_classifier.predict import quality_classifier
 from color_classifier import process_dataset
+from detect import load_vlm_model, vlm_predict_crops
+from hf_sku_matcher import HFSKUMatcher, clean_ocr_text
+from product_matcher import find_top5_matches
+from vram_cleanup import cleanup_vram
 
 
 class ProgressListener(ABC):
@@ -99,20 +106,68 @@ class ProcessVideoUseCase:
         self.quality_model_path = str(quality_model_path)
         
         self.config = config
+        self.is_test = config.get('is_test', False)
+        self.vlm_model_path = str(Path(__file__).parent.parent / "VLM_MODULE" / "AVITO")
+        self.vlm_config_name = "High Quality 8-bit Pro"
         self.best = defaultdict(list)
         self.seg_preds = [[] for _ in range(5)]
         self.frame_to_seg = {}
         self.segment_frames = []
         self.video_fps = 30
 
+    def _build_crops_df_for_vlm(self, rows_crops):
+        rows_for_vlm = [r for r in rows_crops if not r.get('SYS_trash', False)]
+        if not rows_for_vlm:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows_for_vlm)
+        df = df.rename(columns={
+            'x_min_orig': 'x_min', 'y_min_orig': 'y_min',
+            'x_max_orig': 'x_max', 'y_max_orig': 'y_max'
+        })
+        df['crop_array'] = df['crop_image'].apply(lambda x: x if x is not None else None)
+        df = df.drop(columns=['crop_image'], errors='ignore')
+        return df
+
+    def _merge_vlm_results(self, rows_crops, df_final):
+        vlm_lookup = {}
+        for _, row in df_final.iterrows():
+            tid = row.get('SYS_track_id')
+            if tid is not None:
+                vlm_lookup[tid] = row.to_dict()
+        
+        for row in rows_crops:
+            tid = row.get('SYS_track_id')
+            if tid in vlm_lookup:
+                v = vlm_lookup[tid]
+                row['product_name'] = str(v.get('product_name', '')) or row.get('product_name', '')
+                price_default_raw = v.get('price_without_card', '')
+                try:
+                    row['price_default'] = float(price_default_raw) if price_default_raw and str(price_default_raw).strip() else 0.0
+                except (ValueError, TypeError):
+                    row['price_default'] = 0.0
+                price_card_raw = v.get('price_with_card', '')
+                try:
+                    row['price_card'] = float(price_card_raw) if price_card_raw and str(price_card_raw).strip() else 0.0
+                except (ValueError, TypeError):
+                    row['price_card'] = 0.0
+                row['price_discount'] = str(v.get('promo_price', '')) if v.get('promo_price', '') else row.get('price_discount', 'нет')
+                row['barcode'] = v.get('barcode', row.get('barcode', 0))
+                row['discount_amount'] = str(v.get('discount_size', '')) if v.get('discount_size', '') else row.get('discount_amount', 'нет')
+                row['id_sku'] = str(v.get('id_sku', '')) if v.get('id_sku', '') and str(v.get('id_sku', '')) != 'None' else 'нет'
+                row['print_datetime'] = str(v.get('print_date', '')) if v.get('print_date', '') else row.get('print_datetime', '')
+                row['special_symbols'] = str(v.get('layout_code', '')) if v.get('layout_code', '') else row.get('special_symbols', 'нет')
+                row['code'] = v.get('article', row.get('code', 1))
+        return rows_crops
+
     def execute(self, video_path: str, rotation: str, session_tag: str, progress_listener: Optional[ProgressListener] = None) -> Tuple[List[Dict], SessionStats]:
         config = self.config
+        
+        cleanup_vram(verbose=True)
         
         self.video_reader.open(video_path)
         total_frames = self.video_reader.get_total_frames()
         self.video_fps = self.video_reader.get_fps() if self.video_reader.get_fps() > 0 else 30
         
-        # Разбить кадры на 5 сегментов
         all_frame_indices = list(range(total_frames))
         segment_size = max(len(all_frame_indices) // 5, 1)
         self.segment_frames = [
@@ -121,13 +176,11 @@ class ProcessVideoUseCase:
             for i in range(5)
         ]
         
-        # Создать mapping frame -> segment
         self.frame_to_seg = {}
         for sid, frames in enumerate(self.segment_frames):
             for f in frames:
                 self.frame_to_seg[f] = sid
         
-        # Сбросить коллекции
         self.best = defaultdict(list)
         self.seg_preds = [[] for _ in range(5)]
         
@@ -141,10 +194,8 @@ class ProcessVideoUseCase:
             
             fi += 1
             
-            # YOLO track с persist=True
             res = self.detector.track(frame, persist=True)
             
-            # Сбор кропов
             if res.boxes is not None and res.boxes.id is not None:
                 for box, conf, tid in zip(
                     res.boxes.xyxy.cpu().numpy(),
@@ -164,7 +215,6 @@ class ProcessVideoUseCase:
                     self.best[tid].sort(key=lambda x: x.score, reverse=True)
                     self.best[tid] = self.best[tid][:config.main_extraction.top_k]
             
-            # Department только для сегментов
             if fi in self.frame_to_seg:
                 sid = self.frame_to_seg[fi]
                 dept, prob = self.classifier.predict(frame)
@@ -175,13 +225,18 @@ class ProcessVideoUseCase:
                     'prob': prob
                 })
             
-            # Прогресс
             if progress_listener and (fi + 1) % 100 == 0:
                 progress_listener.on_progress(fi + 1, total_frames, len(self.best), 1, "Детекция ценников")
+            
+            if self.is_test and len(self.best) >= 1:
+                break
         
         self.video_reader.close()
         
-        # Этап 2: Классификация качества
+        if self.is_test:
+            first_tid = list(self.best.keys())[0]
+            self.best = {first_tid: self.best[first_tid]}
+        
         crops_for_quality = [(track_id, candidates[0].crop) 
                              for track_id, candidates in self.best.items() 
                              if candidates]
@@ -191,21 +246,17 @@ class ProcessVideoUseCase:
         
         trash_map, confidence_map = quality_classifier(self.quality_model_path, crops_for_quality)
         
-        # Этап 3: Определение цветов
         if progress_listener:
             progress_listener.on_progress(len(crops_for_quality), len(crops_for_quality), len(self.best), 3, "Определение цветов")
         
         color_results = process_dataset(crops_for_quality)
         
-        # Этап 4: Классификация отделов (уже сделана во время детекции, но показываем как завершённый)
         if progress_listener:
             progress_listener.on_progress(len(self.seg_preds), len(self.seg_preds), len(self.best), 4, "Классификация отделов")
         
-        # Собрать результаты
         rows_crops = []
         for track_id, candidates in self.best.items():
             for rank, c in enumerate(candidates):
-                # Выбрать department для этого трека
                 track_frames = [cand.frame_index for cand in candidates]
                 track_depts = []
                 for tf in track_frames:
@@ -256,11 +307,103 @@ class ProcessVideoUseCase:
                     'crop_image': c.crop,
                 })
         
-        # Вычислить mode department для всего видео
+        # --- Этап 5: VLM OCR ---
+        non_trash_rows = [r for r in rows_crops if not r.get('SYS_trash', False)]
+        
+        if non_trash_rows:
+            if progress_listener:
+                progress_listener.on_progress(0, len(non_trash_rows), len(self.best), 5, "VLM OCR распознавание")
+            
+            vlm_input_df = pd.DataFrame(non_trash_rows)
+            vlm_input_df['crop_array'] = vlm_input_df['crop_image'].apply(lambda x: x if x is not None else None)
+            cols_to_keep = ['SYS_track_id', 'SYS_rank', 'SYS_score', 'SYS_confidence', 'SYS_trash',
+                           'x_min', 'y_min', 'x_max', 'y_max', 'crop_array']
+            vlm_input_df = vlm_input_df[[c for c in cols_to_keep if c in vlm_input_df.columns]].copy()
+            
+            try:
+                vlm_model, vlm_processor = load_vlm_model(self.vlm_model_path, config_name=self.vlm_config_name)
+                df_vlm = vlm_predict_crops(vlm_input_df, vlm_model, vlm_processor, config_name=self.vlm_config_name)
+                
+                if progress_listener:
+                    progress_listener.on_progress(len(non_trash_rows), len(non_trash_rows), len(self.best), 5, "VLM OCR распознавание")
+            except Exception as e:
+                print(f"[VLM] Ошибка: {e}")
+                df_vlm = None
+            finally:
+                if 'vlm_model' in dir():
+                    del vlm_model
+                if 'vlm_processor' in dir():
+                    del vlm_processor
+                cleanup_vram()
+            
+            # --- Этап 6: Поиск товаров (product matching) ---
+            if df_vlm is not None and not df_vlm.empty:
+                if progress_listener:
+                    progress_listener.on_progress(0, len(df_vlm), len(self.best), 6, "Поиск товаров")
+                
+                try:
+                    df_vlm['raw_text_clean'] = df_vlm['raw_text'].apply(clean_ocr_text)
+                    df_vlm_match = df_vlm.rename(columns={'raw_text_clean': 'ocr_text'})
+                    df_vlm_match = find_top5_matches(df_vlm_match, ocr_col='ocr_text')
+                    
+                    if progress_listener:
+                        progress_listener.on_progress(len(df_vlm), len(df_vlm), len(self.best), 6, "Поиск товаров")
+                except Exception as e:
+                    print(f"[Product Matcher] Ошибка: {e}")
+                    df_vlm_match = df_vlm.copy()
+                    for i in range(1, 6):
+                        df_vlm_match[f'top{i}'] = None
+                        df_vlm_match[f'top{i}_sku'] = None
+                
+                # Освобождаем DataFrame VLM + product matching перед загрузкой LLM
+                if 'df_vlm' in dir() and df_vlm is not None:
+                    del df_vlm
+                cleanup_vram()
+                
+                # --- Этап 7: LLM подбор SKU ---
+                if progress_listener:
+                    progress_listener.on_progress(0, len(df_vlm_match), len(self.best), 7, "LLM подбор SKU")
+                
+                try:
+                    hf_matcher = HFSKUMatcher(
+                        model_name='Qwen/Qwen2.5-7B-Instruct',
+                        batch_size=8,
+                        max_new_tokens=64,
+                        temperature=0.1,
+                        log_to_file=False
+                    )
+                    df_final = hf_matcher.process_dataframe(df_vlm_match, ocr_col='ocr_text', output_col='id_sku')
+                    hf_matcher.unload_model()
+                    del hf_matcher
+                    
+                    if progress_listener:
+                        progress_listener.on_progress(len(df_vlm_match), len(df_vlm_match), len(self.best), 7, "LLM подбор SKU")
+                except Exception as e:
+                    print(f"[LLM SKU] Ошибка: {e}")
+                    df_final = df_vlm_match.copy()
+                    df_final['id_sku'] = 'нет'
+                    try:
+                        if 'hf_matcher' in dir():
+                            del hf_matcher
+                    except Exception:
+                        pass
+                
+                cleanup_vram()
+                
+                rows_crops = self._merge_vlm_results(rows_crops, df_final)
+                
+                if 'df_vlm_match' in dir():
+                    del df_vlm_match
+                if 'df_final' in dir():
+                    del df_final
+                if 'df_vlm' in dir():
+                    del df_vlm
+                
+                cleanup_vram()
+        
         all_depts = [p['department'] for seg in self.seg_preds for p in seg]
         mode_dept, mode_count = Counter(all_depts).most_common(1)[0] if all_depts else ("", 0)
         
-        # Статистика
         elapsed_time = time.time() - start_time
         stats = SessionStats(
             total_frames=fi + 1,
@@ -271,14 +414,9 @@ class ProcessVideoUseCase:
             mode_department_count=mode_count
         )
         
-        # Сохранить в БД
         self.repository.save_session(session_tag, stats, rows_crops, os.path.basename(video_path), rotation)
         
-        # GPU очистка
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        gc.collect()
+        cleanup_vram(verbose=True)
         
         return rows_crops, stats
 
