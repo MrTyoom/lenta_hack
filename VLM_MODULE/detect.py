@@ -17,29 +17,50 @@ MODEL_PATH = r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\VLM MODULE\AVITO"
 CROPS_DIR = r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\data\tmp\obj_det\best_crops"
 OUTPUT_DIR = r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\VLM MODULE\vlm_select"
 
-PROMPT = """You are analyzing a Russian supermarket price tag. Study the layout carefully.
+PROMPT = """You are a Russian supermarket price tag OCR system. Extract data ONLY.
 
-ELEMENTS AND THEIR POSITIONS:
-- Product name (top-left area, WHITE BACKGROUND): full product name, brand, variety. Located at the top on white background, near the QR-code. Can span MULTIPLE LINES.
-- QR-code (top-right corner): square QR code
-- Discount size (left side, circle): percentage discount like "-26%" or "-32%"
-- Price without card (right side, under QR-code): regular price, smaller font
-- Price with card (right side, large font): main price, biggest number on tag
-- Barcode (bottom area): horizontal barcode with digits below it
-- Article/SKU (under price with card): small number, format digits_digits (e.g. 12345_678)
-- Print date/time (very bottom): date and time when tag was printed
+<CRITICAL_RULES>
+- Output ONLY the 9 values separated by <>
+- NO explanations, NO comments, NO introductory text
+- If you cannot find a field, leave it EMPTY (not "none", not "N/A")
+- Do NOT output any text before or after the data line
+</CRITICAL_RULES>
 
-Extract ALL visible fields. Return ONLY the values in this exact format with <> as separator:
+<OUTPUT_FORMAT>
 product_name<>price_without_card<>price_with_card<>promo_price<>barcode<>discount_size<>article<>layout_code<>print_date
+</OUTPUT_FORMAT>
 
-Rules:
-- promo_price: if there is a separate promo/sale price, otherwise leave empty
-- layout_code: character � inside a circle (if present), otherwise leave empty
-- article: look for pattern  digits_digits (e.g. 12345_678)
-- print_date: full date and time from bottom of tag
-- If any field is not visible, leave it empty (do NOT write "not found")
+<FIELD_DEFINITIONS>
+1. product_name: Full product name with brand/variety (top-left, white background)
+2. price_without_card: Regular price (smaller, under QR-code)
+3. price_with_card: Main price with card (largest number on tag)
+4. promo_price: Sale/promo price if separate (otherwise empty)
+5. barcode: 8-14 digits from barcode
+6. discount_size: Percentage discount like "-26%" or "-32%"
+7. article: SKU in format digits_digits (e.g. 12345_678)
+8. layout_code: Character in circle if present (otherwise empty)
+9. print_date: Date/time from bottom (format: YYYY-MM-DD HH:MM:SS)
+</FIELD_DEFINITIONS>
 
-Respond in Russian language."""
+<EXAMPLES>
+Example 1 (full tag):
+Водка Белое Березка Премиум<>189<>149<>129<>4600000123456<>-26%<>12345_678<><>2024-12-01 14:30:00
+
+Example 2 (no promo price):
+Молоко Домик в Деревне 3.2%<>89<>75<><>4600123456789<>-15%<>98765_432<><>2024-12-01 10:15:00
+
+Example 3 (missing fields - leave empty):
+Хлеб Бородинский<>45<>38<><><><><><><>2024-12-01 08:00:00
+</EXAMPLES>
+
+<NEGATIVE_EXAMPLES>
+WRONG: "На изображении представлен ценник..."
+WRONG: "Внимательно изучив изображение..."
+WRONG: "Продукция_название<>..." (underscore literals!)
+WRONG: Any text before or after the data line
+</NEGATIVE_EXAMPLES>
+
+Now extract data from this image. Output ONLY the 9 values:"""
 
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff', '.tif'}
 
@@ -61,27 +82,76 @@ def collect_images_by_folder(crops_dir):
 
 def parse_response(raw_text):
     fields = {'product_name': '', 'price_without_card': '', 'price_with_card': '', 'promo_price': '', 'barcode': '', 'discount_size': '', 'article': '', 'layout_code': '', 'print_date': ''}
+    
+    # 1. Удаление служебных токенов
     cleaned = re.sub(r'<\|im_start\|>|<\|im_end\|>|<\|vision_start\|>|<\|vision_end\|>', '', raw_text)
     cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', cleaned)
-    cleaned = cleaned.strip()
-    parts = cleaned.split('<>')
+    
+    # 2. Удаление русских объяснений (ключевые фразы)
+    noise_patterns = [
+        r'На\s+изображении\s+представлен[ао]?\s*\.?',
+        r'Внимательно\s+изучив\s+изображение',
+        r'Вот\s+данные',
+        r'Эти\s+данные\s+соответствуют',
+        r'извлеченные\s+из\s+описания',
+        r'согласно\s+заданным\s+правилам',
+        r'как\s+было\s+запрошено',
+        r'представлена\s+информация',
+        r'В\s+ответе\s+использованы',
+    ]
+    for pattern in noise_patterns:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+    
+    # 3. Удаление строк которые НЕ содержат <>
+    lines = cleaned.split('\n')
+    data_lines = [line for line in lines if '<>' in line]
+    if not data_lines:
+        return fields
+    
+    # 4. Берём первую строку с <>
+    data_line = data_lines[0].strip()
+    
+    # 5. Парсинг полей
+    parts = data_line.split('<>')
     field_names = list(fields.keys())
+    
     for i, part in enumerate(parts):
-        if i < len(field_names):
-            value = part.strip()
-            if ':' in value:
-                value = value.split(':', 1)[1].strip()
-            if value and value.lower() not in ['not found', 'none', 'n/a', '-']:
-                fields[field_names[i]] = value
+        if i >= len(field_names):
+            break
+        value = part.strip()
+        
+        # Удаляем префиксы типа "product_name:" из значения
+        if ':' in value and i > 0:
+            value = value.split(':', 1)[1].strip()
+        
+        # Фильтруем мусор
+        if value and value.lower() in ['not found', 'none', 'n/a', '-', '']:
+            value = ''
+        
+        # Проверяем что значение похоже на данные а не текст
+        if i == 0 and len(value) > 50:
+            value = value[:50]
+        
+        fields[field_names[i]] = value
+    
+    # 6. Дочистка article
     if not fields['article']:
-        m = re.search(r'(\d+_\d+)', cleaned)
-        if m: fields['article'] = m.group(1)
+        m = re.search(r'(\d+_\d+)', data_line)
+        if m:
+            fields['article'] = m.group(1)
+    
+    # 7. Дочистка barcode
     if not fields['barcode']:
-        m = re.search(r'\b(\d{8,14})\b', cleaned)
-        if m: fields['barcode'] = m.group(1)
-    if not fields['discount_size']:
-        m = re.search(r'(-?\d+[%\s]*руб|рублей|\d+[%])', cleaned, re.IGNORECASE)
-        if m: fields['discount_size'] = m.group(1)
+        m = re.search(r'\b(\d{8,14})\b', data_line)
+        if m:
+            fields['barcode'] = m.group(1)
+    
+    # 8. Дочистка discount_size
+    if fields['discount_size']:
+        m = re.search(r'(-?\d+)%', fields['discount_size'])
+        if m:
+            fields['discount_size'] = f"{m.group(1)}%"
+    
     return fields
 
 
@@ -92,6 +162,7 @@ def get_configs():
         "4-bit NF4": {"model_kwargs": {"quantization_config": q, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512}},
         "High Quality": {"model_kwargs": {"quantization_config": q, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512, "do_sample": False, "temperature": 0.1}, "vision_kwargs": {"min_pixels": 4*28*28, "max_pixels": 2048*28*28}},
         "High Quality 8-bit": {"model_kwargs": {"quantization_config": q8, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512, "do_sample": False, "temperature": 0.1}, "vision_kwargs": {"min_pixels": 4*28*28, "max_pixels": 2048*28*28}},
+        "High Quality 8-bit Ultra": {"model_kwargs": {"quantization_config": q8, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 384, "do_sample": False, "temperature": 0.1, "repetition_penalty": 1.2}, "vision_kwargs": {"min_pixels": 8*28*28, "max_pixels": 3072*28*28}},
         "Fast-64": {"model_kwargs": {"dtype": torch.float16, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 64}},
         "Fast-128": {"model_kwargs": {"dtype": torch.float16, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 128}},
     }

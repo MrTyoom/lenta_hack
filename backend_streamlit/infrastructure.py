@@ -277,3 +277,34 @@ class SqliteSessionRepository(SessionRepository):
                 {'department': r[0], 'session_count': r[1], 'total_detections': r[2]}
                 for r in cursor.fetchall()
             ]
+    
+    def get_daily_good_bad_stats(self) -> List[Dict[str, Any]]:
+        """Статистика хороших/плохих ценников по дням (для всех сессий)"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DATE(s.created_at) as date, 
+                       COUNT(CASE WHEN pt.SYS_trash = 0 THEN 1 END) as good,
+                       COUNT(CASE WHEN pt.SYS_trash = 1 THEN 1 END) as bad
+                FROM sessions s
+                JOIN price_tags pt ON s.id = pt.session_id
+                GROUP BY DATE(s.created_at)
+                ORDER BY date ASC
+            """)
+            return [{'date': r[0], 'good': r[1], 'bad': r[2]} for r in cursor.fetchall()]
+    
+    def get_today_department_stats(self) -> List[Dict[str, Any]]:
+        """Статистика по отделам за сегодня (хорошие/плохие)"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT pt.department,
+                       COUNT(CASE WHEN pt.SYS_trash = 0 THEN 1 END) as good,
+                       COUNT(CASE WHEN pt.SYS_trash = 1 THEN 1 END) as bad
+                FROM sessions s
+                JOIN price_tags pt ON s.id = pt.session_id
+                WHERE DATE(s.created_at) = DATE('now')
+                GROUP BY pt.department
+                ORDER BY good DESC
+            """)
+            return [{'department': r[0], 'good': r[1], 'bad': r[2]} for r in cursor.fetchall()]

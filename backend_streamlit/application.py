@@ -27,7 +27,7 @@ from color_classifier import process_dataset
 
 class ProgressListener(ABC):
     @abstractmethod
-    def on_progress(self, processed: int, total: int, detections: int): pass
+    def on_progress(self, processed: int, total: int, detections: int, stage: int = 1, stage_name: str = "Детекция"): pass
 
 
 class ObjectDetector(ABC):
@@ -62,6 +62,10 @@ class SessionRepository(ABC):
     def get_all_sessions(self) -> List[Dict[str, Any]]: pass
     @abstractmethod
     def get_department_distribution(self) -> List[Dict[str, Any]]: pass
+    @abstractmethod
+    def get_daily_good_bad_stats(self) -> List[Dict[str, Any]]: pass
+    @abstractmethod
+    def get_today_department_stats(self) -> List[Dict[str, Any]]: pass
 
 
 class DepartmentClassifier:
@@ -173,17 +177,29 @@ class ProcessVideoUseCase:
             
             # Прогресс
             if progress_listener and (fi + 1) % 100 == 0:
-                progress_listener.on_progress(fi + 1, total_frames, len(self.best))
+                progress_listener.on_progress(fi + 1, total_frames, len(self.best), 1, "Детекция ценников")
         
         self.video_reader.close()
         
-        # Классификация качества и цвета
+        # Этап 2: Классификация качества
         crops_for_quality = [(track_id, candidates[0].crop) 
                              for track_id, candidates in self.best.items() 
                              if candidates]
         
+        if progress_listener:
+            progress_listener.on_progress(len(crops_for_quality), len(crops_for_quality), len(self.best), 2, "Оценка качества")
+        
         trash_map, confidence_map = quality_classifier(self.quality_model_path, crops_for_quality)
+        
+        # Этап 3: Определение цветов
+        if progress_listener:
+            progress_listener.on_progress(len(crops_for_quality), len(crops_for_quality), len(self.best), 3, "Определение цветов")
+        
         color_results = process_dataset(crops_for_quality)
+        
+        # Этап 4: Классификация отделов (уже сделана во время детекции, но показываем как завершённый)
+        if progress_listener:
+            progress_listener.on_progress(len(self.seg_preds), len(self.seg_preds), len(self.best), 4, "Классификация отделов")
         
         # Собрать результаты
         rows_crops = []
@@ -271,7 +287,14 @@ class GetAnalyticsUseCase:
     def __init__(self, repository: SessionRepository):
         self.repository = repository
 
-    def get_dashboard_data(self) -> Tuple[Tuple[int, int], List[Dict[str, Any]]]:
+    def get_dashboard_data(self) -> Dict[str, Any]:
         problem_stats = self.repository.get_problematic_stats()
         daily_trends = self.repository.get_daily_trends()
-        return problem_stats, daily_trends
+        daily_good_bad = self.repository.get_daily_good_bad_stats()
+        today_dept = self.repository.get_today_department_stats()
+        return {
+            'problem_stats': problem_stats,
+            'daily_trends': daily_trends,
+            'daily_good_bad': daily_good_bad,
+            'today_department': today_dept
+        }
