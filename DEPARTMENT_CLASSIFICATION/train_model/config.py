@@ -5,7 +5,7 @@
 from pathlib import Path
 
 # Пути
-DATA_DIR = Path(r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\DEPARTMENT CLASSIFICATION\department")
+DATA_DIR = Path(__file__).parent.parent / "department"
 
 # Исключаем папки которые не нужны
 EXCLUDE_FOLDERS = {'', '__pycache__'}

@@ -10,7 +10,7 @@ __pycache__/
 *.so
 best_crops.py
 
-# === ДАННЫЕ И МЕДИА (можно перегенерировать) ===
+# === МЕДИА (не в git) ===
 # Изображения
 *.jpg
 *.jpeg
@@ -25,18 +25,22 @@ best_crops.py
 *.mkv
 *.wmv
 
-# Excel и CSV
-*.xlsx
-*.xls
-*.csv
+# === ВЫХОДНЫЕ ФАЙЛЫ (генерируются, не в git) ===
+# Результаты матчинга
+matching_result.xlsx
+match_result.xlsx
+hf_match_results.xlsx
+prefinal.xlsx
+vlm_new2.xlsx
+result.xlsx
 
-# Pickle и бинарные файлы данных
-*.pkl
-*.bin
-*.pt
+# CSV (генерируемые)
+result*.csv
 
-# Базы данных
+# Базы данных (генерируются)
 *.db
+lenta_hack.db
+lenta_products.db
 
 # === ПАПКИ С ДАННЫМИ ===
 data/
@@ -44,8 +48,7 @@ TRAKING BBOX VIDEO AND PHOTO/
 test/
 runs/
 video_output/
-models/
-# YOLO данные и результаты
+# YOLO данные и результаты (модель best.pt трекается отдельно)
 YOLO_MODULE/
 
 
@@ -53,13 +56,16 @@ YOLO_MODULE/
 DEPARTMENT CLASSIFICATION/department/
 
 
-# LLM и VLM модели/данные
-LLMTEXT/bge-m3/
-LLMTEXT/LLMTEXT/bge-m3/
+# === HF МОДЕЛИ (скачиваются автоматически, НЕ в git) ===
 **/bge-m3/
 bge-m3
 VLM_MODULE/AVITO/
 vlm_select/
+
+# === СГЕНЕРИРОВАННЫЕ КЭШИ (не в git) ===
+faiss_index*
+*.pkl
+*.log
 
 # === ОС ===
 .DS_Store

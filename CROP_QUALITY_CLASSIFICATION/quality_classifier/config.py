@@ -1,6 +1,6 @@
 from pathlib import Path
 
-DATA_DIR = Path(r"d:\cv start\data\quality")
+DATA_DIR = Path(__file__).parent.parent.parent / "data" / "quality"
 
 MODEL_NAME = 'mobilenet-v3'      # mobilenet-v3 | efficientnet-b0 | resnet-50
 NUM_CLASSES = 2                   # bad, normal

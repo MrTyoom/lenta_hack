@@ -144,11 +144,11 @@ class SqliteSessionRepository(SessionRepository):
                     price_default REAL,
                     price_card REAL,
                     price_discount TEXT,
-                    barcode INTEGER,
+                    barcode TEXT,
                     discount_amount TEXT,
                     id_sku TEXT,
                     print_datetime TEXT,
-                    code INTEGER,
+                    code TEXT,
                     additional_info TEXT,
                     color TEXT,
                     special_symbols TEXT,
@@ -157,8 +157,17 @@ class SqliteSessionRepository(SessionRepository):
                     y_min INTEGER,
                     x_max INTEGER,
                     y_max INTEGER,
-                    qr_code_barcode INTEGER,
+                    qr_code_barcode TEXT,
                     price1_qr REAL,
+                    price2_qr TEXT,
+                    price3_qr TEXT,
+                    price4_qr TEXT,
+                    wholesale_level_1_count TEXT,
+                    wholesale_level_1_price TEXT,
+                    wholesale_level_2_count TEXT,
+                    wholesale_level_2_price TEXT,
+                    action_price_qr TEXT,
+                    action_code_qr TEXT,
                     is_problematic INTEGER,
                     department TEXT,
                     department_prob REAL,
@@ -168,6 +177,24 @@ class SqliteSessionRepository(SessionRepository):
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
                 )
             """)
+            conn.commit()
+            
+            new_columns = [
+                ('price2_qr', 'TEXT'),
+                ('price3_qr', 'TEXT'),
+                ('price4_qr', 'TEXT'),
+                ('wholesale_level_1_count', 'TEXT'),
+                ('wholesale_level_1_price', 'TEXT'),
+                ('wholesale_level_2_count', 'TEXT'),
+                ('wholesale_level_2_price', 'TEXT'),
+                ('action_price_qr', 'TEXT'),
+                ('action_code_qr', 'TEXT'),
+            ]
+            for col_name, col_type in new_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE price_tags ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
 
     def save_session(self, tag: str, stats: SessionStats, rows_crops: List[Dict], video_filename: str, rotation: str) -> int:
@@ -195,14 +222,22 @@ class SqliteSessionRepository(SessionRepository):
                         session_id, filename, product_name, price_default, price_card, price_discount,
                         barcode, discount_amount, id_sku, print_datetime, code, additional_info,
                         color, special_symbols, frame_timestamp, x_min, y_min, x_max, y_max,
-                        qr_code_barcode, price1_qr, is_problematic, department, department_prob, track_id,
+                        qr_code_barcode, price1_qr, price2_qr, price3_qr, price4_qr,
+                        wholesale_level_1_count, wholesale_level_1_price,
+                        wholesale_level_2_count, wholesale_level_2_price,
+                        action_price_qr, action_code_qr,
+                        is_problematic, department, department_prob, track_id,
                         SYS_trash, SYS_quality_confidence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    session_id, row['filename'], row['product_name'], row['price_default'], row['price_card'], row['price_discount'],
-                    row['barcode'], row['discount_amount'], row['id_sku'], row['print_datetime'], row['code'], row['additional_info'],
-                    row['color'], row['special_symbols'], row['frame_timestamp'], row['x_min'], row['y_min'], row['x_max'], row['y_max'],
-                    row['qr_code_barcode'], row['price1_qr'], row['is_problematic'], row['department'], row['department_prob'], row['track_id'],
+                    session_id, row['filename'], row['product_name'], row.get('price_default'), row.get('price_card'), row.get('price_discount'),
+                    row.get('barcode'), row.get('discount_amount'), row.get('id_sku'), row.get('print_datetime'), row.get('code'), row.get('additional_info'),
+                    row.get('color'), row.get('special_symbols'), row.get('frame_timestamp'), row.get('x_min'), row.get('y_min'), row.get('x_max'), row.get('y_max'),
+                    row.get('qr_code_barcode'), row.get('price1_qr'), row.get('price2_qr'), row.get('price3_qr'), row.get('price4_qr'),
+                    row.get('wholesale_level_1_count'), row.get('wholesale_level_1_price'),
+                    row.get('wholesale_level_2_count'), row.get('wholesale_level_2_price'),
+                    row.get('action_price_qr'), row.get('action_code_qr'),
+                    1 if row.get('SYS_trash', False) else 0, row.get('department', ''), row.get('department_prob', 0.0), row.get('track_id', 0),
                     1 if row.get('SYS_trash', False) else 0, row.get('SYS_quality_confidence', 0.0)
                 ))
             conn.commit()
@@ -294,11 +329,11 @@ class SqliteSessionRepository(SessionRepository):
             return [{'date': r[0], 'good': r[1], 'bad': r[2]} for r in cursor.fetchall()]
     
     def get_today_department_stats(self) -> List[Dict[str, Any]]:
-        """Статистика по тэгам (сессиям) за сегодня"""
+        """Статистика по отделам (mode_department) за сегодня"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT s.tag as tag,
+                SELECT s.mode_department as department,
                        COUNT(DISTINCT s.id) as sessions,
                        SUM(s.total_detections) as total,
                        SUM(CASE WHEN pt.SYS_trash = 0 THEN 1 ELSE 0 END) as good,
@@ -306,7 +341,7 @@ class SqliteSessionRepository(SessionRepository):
                 FROM sessions s
                 LEFT JOIN price_tags pt ON s.id = pt.session_id
                 WHERE DATE(s.created_at) = DATE('now')
-                GROUP BY s.tag
+                GROUP BY s.mode_department
                 ORDER BY total DESC
             """)
-            return [{'tag': r[0], 'sessions': r[1], 'total': r[2], 'good': r[3], 'bad': r[4]} for r in cursor.fetchall()]
+            return [{'department': r[0], 'sessions': r[1], 'total': r[2], 'good': r[3], 'bad': r[4]} for r in cursor.fetchall()]

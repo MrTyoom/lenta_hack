@@ -13,17 +13,19 @@ from qwen_vl_utils import process_vision_info
 
 CURRENT_CONFIG = "4-bit NF4"
 
-MODEL_PATH = r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\VLM MODULE\AVITO"
-CROPS_DIR = r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\data\tmp\obj_det\best_crops"
-OUTPUT_DIR = r"C:\Users\GGamers\Desktop\FLC\hackhatons\lenta\VLM MODULE\vlm_select"
+MODEL_PATH = str(Path(__file__).parent / "AVITO")
+MODEL_HF_ID = "AvitoTech/a-vision"
+CROPS_DIR = str(Path(__file__).parent.parent / "data" / "tmp" / "obj_det" / "best_crops")
+OUTPUT_DIR = str(Path(__file__).parent / "vlm_select")
 
 PROMPT = """You are a Russian supermarket price tag OCR system. Extract data ONLY.
 
 <CRITICAL_RULES>
 - Output ONLY the 9 values separated by <>
 - NO explanations, NO comments, NO introductory text
-- If you cannot find a field, leave it EMPTY (not "none", not "N/A")
+- If you cannot find a field, leave it EMPTY (not "none", not "N/A", not "-")
 - Do NOT output any text before or after the data line
+- Read Russian text carefully: distinguish И/Й, Ш/Щ, Б/В, П/Л, Ц/Щ, З/Э, О/Ф, Ё/Е
 </CRITICAL_RULES>
 
 <OUTPUT_FORMAT>
@@ -31,26 +33,47 @@ product_name<>price_without_card<>price_with_card<>promo_price<>barcode<>discoun
 </OUTPUT_FORMAT>
 
 <FIELD_DEFINITIONS>
-1. product_name: Full product name with brand/variety (top-left, white background)
-2. price_without_card: Regular price (smaller, under QR-code)
-3. price_with_card: Main price with card (largest number on tag)
-4. promo_price: Sale/promo price if separate (otherwise empty)
-5. barcode: 8-14 digits from barcode
-6. discount_size: Percentage discount like "-26%" or "-32%"
-7. article: SKU in format digits_digits (e.g. 12345_678)
-8. layout_code: Character in circle if present (otherwise empty)
-9. print_date: Date/time from bottom (format: YYYY-MM-DD HH:MM:SS)
+1. product_name: Full product name with brand and variety. Usually on yellow/white background, large font. Include weight/volume if visible (e.g. "Молоко Простоквашино 3.2% 900мл"). Fix obvious OCR errors in Cyrillic (e.g. "MO/\OKO" -> "МОЛОКО").
+
+2. price_without_card: Regular price in RUB.KOP format (e.g. "18999" = 189.99). Usually smaller text near "Цена без карты" or under QR code. If card price is the only price shown, leave this EMPTY.
+
+3. price_with_card: Main price with loyalty card in RUB.KOP (e.g. "14999" = 149.99). Usually the LARGEST number on the tag, often colored red/yellow. This is the price customers with Lenta card pay. Remove currency symbols (₽, руб).
+
+4. promo_price: Special promo/sale price if explicitly marked with a different label (e.g. "Акция", "Суперцена", "Красная цена"). Otherwise EMPTY.
+
+5. barcode: 8-14 digit number from barcode block. Usually starts with 46 (Russia). Strip all spaces, copy exactly as digits.
+
+6. discount_size: Percentage discount with % sign (e.g. "-26%" or "-32%"). Often in colored circle/badge. Include minus sign if present. EMPTY if no discount shown.
+
+7. article: Internal SKU code, format DIGITS_DIGITS (e.g. "12345_678"). Usually printed in small font near barcode or at the bottom right. Sometimes labeled "Арт." or "Код". If only one number visible, use "DIGITS_" or "_DIGITS".
+
+8. layout_code: Single character in a circle (usually at the top or bottom). Б, В, Г, Д, etc. If not present, EMPTY.
+
+9. print_date: Date and time from the bottom line of the tag. Format: YYYY-MM-DD HH:MM:SS. Normalize: convert "24.12.01" -> "2024-12-01", "01.12.24" -> "2024-12-01". EMPTY if no date visible.
 </FIELD_DEFINITIONS>
 
-<EXAMPLES>
-Example 1 (full tag):
-Водка Белое Березка Премиум<>189<>149<>129<>4600000123456<>-26%<>12345_678<><>2024-12-01 14:30:00
+<PRICE_FORMAT_EXAMPLES>
+- "18999" = 189.99 RUB -> output "18999" (no decimal point, no currency)
+- "75" = 75.00 RUB -> output "7500" (pad to kopecks)
+- "149,99" on tag -> output "14999"
+- "149.99" on tag -> output "14999"
+</PRICE_FORMAT_EXAMPLES>
 
-Example 2 (no promo price):
-Молоко Домик в Деревне 3.2%<>89<>75<><>4600123456789<>-15%<>98765_432<><>2024-12-01 10:15:00
+<EXAMPLES>
+Example 1 (full tag with all fields):
+Водка Белое Березка Премиум<>18999<>14999<>12999<>4600000123456<>-26%<>12345_678<>Б<>2024-12-01 14:30:00
+
+Example 2 (no promo price, no layout code):
+Молоко Домик в Деревне 3.2% 900мл<>8500<>7500<><>4600123456789<>-15%<>98765_432<><>2024-12-01 10:15:00
 
 Example 3 (missing fields - leave empty):
-Хлеб Бородинский<>45<>38<><><><><><><>2024-12-01 08:00:00
+Хлеб Бородинский нарезка<>4500<>3800<><><><><><><>2024-12-01 08:00:00
+
+Example 4 (card price is the only price shown):
+Сыр Российский 200г<><>19999<><>4607000001234<><>55555_333<><>2024-12-01 09:30:00
+
+Example 5 (promo price present, no regular price):
+Колбаса Докторская Велком<><>29999<>24999<>4600000888777<>-17%<>11111_222<>Д<>2024-11-30 16:45:00
 </EXAMPLES>
 
 <NEGATIVE_EXAMPLES>
@@ -58,6 +81,8 @@ WRONG: "На изображении представлен ценник..."
 WRONG: "Внимательно изучив изображение..."
 WRONG: "Продукция_название<>..." (underscore literals!)
 WRONG: Any text before or after the data line
+WRONG: "Молоко 3.2%<>85<>75<>-15%<><><><><>" (price values without kopecks!)
+WRONG: "none<>N/A<>N/A<><><><><><><>" (use EMPTY instead of none/N/A!)
 </NEGATIVE_EXAMPLES>
 
 Now extract data from this image. Output ONLY the 9 values:"""
@@ -80,14 +105,48 @@ def collect_images_by_folder(crops_dir):
         print(f"  {fname}: {len(imgs)} images")
     return folders
 
+FIELD_NAMES_SET = {
+    'product_name', 'price_without_card', 'price_with_card', 'promo_price',
+    'barcode', 'discount_size', 'article', 'layout_code', 'print_date',
+    'product name', 'price without card', 'price with card', 'promo price',
+    'discount size', 'layout code', 'print date',
+    'продукт_название', 'шифр', 'цена_без_карты', 'цена_с_картой',
+    'акционная_цена', 'размер_скидки', 'размер_скидаки', 'артикул',
+    'код_расположению', 'код_расположение', 'дата_печати',
+    'продукт название', 'цена без карты', 'цена с картой',
+    'акционная цена', 'размер скидки', 'размер скидаки',
+    'код расположению', 'код расположение', 'дата печати',
+}
+
+ARTICLE_STUBS = {'12345_678', '98765_432', '55555_333', '11111_222', '421'}
+
+BARCODE_STUBS = {'4600000123456', '4600000888777', '4607000001234', '4600123456789', '4210000000000'}
+
+
+def _is_field_name(val):
+    if not val:
+        return True
+    return val.strip().lower() in {f.lower() for f in FIELD_NAMES_SET}
+
+
+def _is_article_stub(val):
+    if not val:
+        return True
+    return val.strip() in ARTICLE_STUBS
+
+
+def _is_barcode_stub(val):
+    if not val:
+        return True
+    return val.strip() in BARCODE_STUBS
+
+
 def parse_response(raw_text):
     fields = {'product_name': '', 'price_without_card': '', 'price_with_card': '', 'promo_price': '', 'barcode': '', 'discount_size': '', 'article': '', 'layout_code': '', 'print_date': ''}
     
-    # 1. Удаление служебных токенов
     cleaned = re.sub(r'<\|im_start\|>|<\|im_end\|>|<\|vision_start\|>|<\|vision_end\|>', '', raw_text)
     cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', cleaned)
     
-    # 2. Удаление русских объяснений (ключевые фразы)
     noise_patterns = [
         r'На\s+изображении\s+представлен[ао]?\s*\.?',
         r'Внимательно\s+изучив\s+изображение',
@@ -102,55 +161,68 @@ def parse_response(raw_text):
     for pattern in noise_patterns:
         cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
     
-    # 3. Удаление строк которые НЕ содержат <>
     lines = cleaned.split('\n')
     data_lines = [line for line in lines if '<>' in line]
     if not data_lines:
         return fields
     
-    # 4. Берём первую строку с <>
     data_line = data_lines[0].strip()
     
-    # 5. Парсинг полей
     parts = data_line.split('<>')
     field_names = list(fields.keys())
+    
+    header_detected = _is_field_name(parts[0].strip()) if parts else False
     
     for i, part in enumerate(parts):
         if i >= len(field_names):
             break
         value = part.strip()
         
-        # Удаляем префиксы типа "product_name:" из значения
         if ':' in value and i > 0:
             value = value.split(':', 1)[1].strip()
         
-        # Фильтруем мусор
-        if value and value.lower() in ['not found', 'none', 'n/a', '-', '']:
+        if value and value.lower() in ['not found', 'none', 'n/a', '-']:
             value = ''
         
-        # Проверяем что значение похоже на данные а не текст
-        if i == 0 and len(value) > 50:
-            value = value[:50]
+        if _is_field_name(value):
+            value = ''
+        
+        if i == 0 and len(value) > 100:
+            value = value[:100]
         
         fields[field_names[i]] = value
     
-    # 6. Дочистка article
-    if not fields['article']:
-        m = re.search(r'(\d+_\d+)', data_line)
-        if m:
-            fields['article'] = m.group(1)
+    if header_detected and not fields['product_name']:
+        for line in data_lines[1:]:
+            extra = line.strip()
+            if '<>' in extra:
+                extra_parts = extra.split('<>')
+                for p in extra_parts:
+                    p = p.strip()
+                    if p and not _is_field_name(p) and not re.match(r'^[\d.,%-]+$', p):
+                        fields['product_name'] = p
+                        break
+            elif extra and not _is_field_name(extra) and not re.match(r'^[\d.,%-]+$', extra):
+                fields['product_name'] = extra
+                break
     
-    # 7. Дочистка barcode
-    if not fields['barcode']:
+    if not fields['article'] or _is_article_stub(fields['article']):
+        fields['article'] = ''
+    
+    if not fields['barcode'] or _is_barcode_stub(fields['barcode']):
         m = re.search(r'\b(\d{8,14})\b', data_line)
-        if m:
+        if m and not _is_barcode_stub(m.group(1)):
             fields['barcode'] = m.group(1)
+        elif _is_barcode_stub(fields['barcode']):
+            fields['barcode'] = ''
     
-    # 8. Дочистка discount_size
     if fields['discount_size']:
         m = re.search(r'(-?\d+)%', fields['discount_size'])
         if m:
             fields['discount_size'] = f"{m.group(1)}%"
+    
+    for key in fields:
+        fields[key] = fields[key].replace('<0x0A>', ' ').replace('▁', ' ').strip()
     
     return fields
 
@@ -163,6 +235,7 @@ def get_configs():
         "High Quality": {"model_kwargs": {"quantization_config": q, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512, "do_sample": False, "temperature": 0.1}, "vision_kwargs": {"min_pixels": 4*28*28, "max_pixels": 2048*28*28}},
         "High Quality 8-bit": {"model_kwargs": {"quantization_config": q8, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 512, "do_sample": False, "temperature": 0.1}, "vision_kwargs": {"min_pixels": 4*28*28, "max_pixels": 2048*28*28}},
         "High Quality 8-bit Ultra": {"model_kwargs": {"quantization_config": q8, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 384, "do_sample": False, "temperature": 0.1, "repetition_penalty": 1.2}, "vision_kwargs": {"min_pixels": 8*28*28, "max_pixels": 3072*28*28}},
+        "High Quality 8-bit Pro": {"model_kwargs": {"quantization_config": q8, "device_map": "sequential"}, "generate_kwargs": {"max_new_tokens": 384, "do_sample": False, "temperature": 0.05, "repetition_penalty": 1.3, "no_repeat_ngram_size": 3}, "vision_kwargs": {"min_pixels": 12*28*28, "max_pixels": 4096*28*28}},
         "Fast-64": {"model_kwargs": {"dtype": torch.float16, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 64}},
         "Fast-128": {"model_kwargs": {"dtype": torch.float16, "device_map": "auto"}, "generate_kwargs": {"max_new_tokens": 128}},
     }
@@ -177,8 +250,14 @@ def load_vlm_model(model_path, config_name="4-bit NF4"):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-    model = AutoModelForImageTextToText.from_pretrained(model_path, local_files_only=True, **cp["model_kwargs"])
-    processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+    if os.path.isdir(model_path):
+        model = AutoModelForImageTextToText.from_pretrained(model_path, local_files_only=True, **cp["model_kwargs"])
+        processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+    else:
+        model = AutoModelForImageTextToText.from_pretrained(MODEL_HF_ID, **cp["model_kwargs"])
+        processor = AutoProcessor.from_pretrained(MODEL_HF_ID)
+        model.save_pretrained(model_path)
+        processor.save_pretrained(model_path)
     return model, processor
 
 
@@ -221,8 +300,14 @@ def run_benchmark():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
     load_start = time.time()
-    model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, local_files_only=True, **config_params["model_kwargs"])
-    processor = AutoProcessor.from_pretrained(MODEL_PATH, local_files_only=True)
+    if os.path.isdir(MODEL_PATH):
+        model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, local_files_only=True, **config_params["model_kwargs"])
+        processor = AutoProcessor.from_pretrained(MODEL_PATH, local_files_only=True)
+    else:
+        model = AutoModelForImageTextToText.from_pretrained(MODEL_HF_ID, **config_params["model_kwargs"])
+        processor = AutoProcessor.from_pretrained(MODEL_HF_ID)
+        model.save_pretrained(MODEL_PATH)
+        processor.save_pretrained(MODEL_PATH)
     load_time = time.time() - load_start
     print(f"Model loaded in {load_time:.2f}s")
     all_results = []

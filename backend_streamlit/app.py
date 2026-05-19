@@ -20,20 +20,22 @@ class StreamlitProgressAdapter(ProgressListener):
             "1. Детекция ценников (YOLO)",
             "2. Оценка качества",
             "3. Определение цветов",
-            "4. Классификация отделов"
+            "4. Классификация отделов",
+            "5. VLM OCR распознавание",
+            "6. Поиск товаров",
+            "7. LLM подбор SKU"
         ]
 
     def on_progress(self, processed: int, total: int, detections: int, stage: int = 1, stage_name: str = "Детекция"):
         if total > 0:
             stage_percent = processed / total if total > 0 else 0
-            overall_percent = ((stage - 1) * 0.25) + (stage_percent * 0.25)
+            overall_percent = ((stage - 1) * (1.0 / 7.0)) + (stage_percent * (1.0 / 7.0))
             self.bar.progress(min(overall_percent, 1.0))
             stage_status = "✓" if stage_percent >= 1.0 else "→"
-            self.text.text(f"Этап {stage}/4: {stage_name} {stage_status} ({int(stage_percent * 100)}%)")
+            self.text.text(f"Этап {stage}/7: {stage_name} {stage_status} ({int(stage_percent * 100)}%)")
 
 
 def encode_crop_to_base64(crop):
-    """Конвертировать numpy array crop в base64 для отображения"""
     if crop is None:
         return None
     _, buffer = cv2.imencode('.png', crop)
@@ -60,7 +62,6 @@ except Exception as e:
 video_use_case = ProcessVideoUseCase(detector_infra, video_infra, repo_infra)
 analytics_use_case = GetAnalyticsUseCase(repo_infra)
 
-# Инициализация session_state
 if 'report_df' not in st.session_state:
     st.session_state.report_df = None
 if 'metrics' not in st.session_state:
@@ -74,12 +75,10 @@ if 'bad_crops_data' not in st.session_state:
 if 'tag_value' not in st.session_state:
     st.session_state.tag_value = ""
 
-# Авто-переключение на аналитику после обработки
 if st.session_state.processing_done and st.session_state.report_df is not None:
     if not st.session_state.tag_value:
         st.session_state.tag_value = st.session_state.metrics.mode_department
 
-# Вкладка 1: Загрузка видео и аналитика на одной странице
 st.title("🤖 Система инспекции ценников")
 
 uploaded_file = st.file_uploader("Загрузите видео", type=["mp4", "avi", "mov"])
@@ -88,7 +87,6 @@ rotation_options = ["90° против часовой", "90° по часово�
 selected_rotation = st.selectbox("Ориентация видео", options=rotation_options, index=0)
     
 if uploaded_file is not None:
-    # Проверка на новый файл
     if st.session_state.last_uploaded_file != uploaded_file.name:
         st.session_state.last_uploaded_file = uploaded_file.name
         st.session_state.processing_done = False
@@ -97,7 +95,6 @@ if uploaded_file is not None:
         st.session_state.bad_crops_data = None
         st.session_state.tag_value = ""
     
-    # Авто-запуск обработки
     if not st.session_state.processing_done:
         with st.spinner("Обработка видео..."):
             ui_progress_bar = st.progress(0)
@@ -118,26 +115,9 @@ if uploaded_file is not None:
             
             os.unlink(temp_video_path)
             
-            # Сохранить данные для аналитики
-            df = pd.DataFrame(domain_tags)
+            df = domain_tags
             
-            # Извлечь crop изображения для плохих кропов
-            bad_crops = df[df['SYS_trash'] == True].copy()
-            bad_crops_data = []
-            for _, row in bad_crops.iterrows():
-                if row.get('crop_image') is not None:
-                    bad_crops_data.append({
-                        'track_id': row['SYS_track_id'],
-                        'confidence': row['SYS_quality_confidence'],
-                        'image_base64': encode_crop_to_base64(row['crop_image']),
-                        'color': row['color'],
-                    })
-            
-            st.session_state.bad_crops_data = bad_crops_data
-            
-            # Удалить crop_image из DataFrame перед сохранением (не сериализуется)
-            if 'crop_image' in df.columns:
-                df = df.drop(columns=['crop_image'])
+            st.session_state.bad_crops_data = video_use_case.bad_crops_data
             
             st.session_state.report_df = df
             st.session_state.metrics = domain_stats
@@ -145,18 +125,14 @@ if uploaded_file is not None:
             st.session_state.processing_done = True
             st.rerun()
 
-# Подсказка
 st.info("💡 После завершения обработки ниже появится статистика")
 
-# Блок статистики (появляется после обработки)
 if st.session_state.processing_done and st.session_state.report_df is not None:
     df = st.session_state.report_df
     
     st.markdown("---")
     st.subheader("📊 Статистика обработки")
     
-    # Тэг (отдел)
-    st.markdown("### 🏷️ Тэг")
     dept_input = st.text_input(
         "Отдел (определён автоматически)",
         value=st.session_state.tag_value,
@@ -167,20 +143,32 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
         st.session_state.report_df['department'] = dept_input
         st.success(f"✅ Отдел изменён на **{dept_input}**")
     
-    # Всего ценников
     total_crops = len(df)
     bad_crops_count = len(df[df['SYS_trash'] == True]) if 'SYS_trash' in df.columns else 0
     good_crops_count = total_crops - bad_crops_count
     
-    col1, col2, col3 = st.columns(3)
+    matched_count = len(df[df['id_sku'].notna() & (df['id_sku'] != 'нет')]) if 'id_sku' in df.columns else 0
+    ocr_count = len(df[df['product_name'].notna() & (df['product_name'] != '')]) if 'product_name' in df.columns else 0
+    
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📦 Всего ценников", total_crops)
     with col2:
         st.metric("✅ Хороших", good_crops_count)
     with col3:
         st.metric("🗑️ Плохих", bad_crops_count)
+    with col4:
+        st.metric("🏷️ SKU найдено", matched_count)
     
-    # Скачать CSV и прогресс
+    if 'product_name' in df.columns:
+        good_df = df[df['SYS_trash'] == False] if 'SYS_trash' in df.columns else df
+        if not good_df.empty:
+            st.markdown("### 📋 Распознанные ценники")
+            display_cols = ['product_name', 'price_card', 'barcode', 'id_sku', 'color', 'department']
+            available_cols = [c for c in display_cols if c in good_df.columns]
+            if available_cols:
+                st.dataframe(good_df[available_cols].head(20), use_container_width=True)
+    
     st.markdown("### 📥 Экспорт")
     csv_col, progress_col = st.columns([1, 2])
     
@@ -200,11 +188,9 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
         st.progress(1.0)
         st.caption("✅ Обработка завершена")
     
-    # Графики
     st.markdown("---")
     st.subheader("📈 Графики")
     
-    # Получить данные для графиков
     dashboard_data = analytics_use_case.get_dashboard_data()
     daily_good_bad = dashboard_data['daily_good_bad']
     today_dept = dashboard_data['today_department']
@@ -216,7 +202,7 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
         if daily_good_bad:
             daily_df = pd.DataFrame(daily_good_bad[-7:])
             if not daily_df.empty:
-                daily_chart_df = daily_df[['good', 'bad']].set_index('date')
+                daily_chart_df = daily_df.set_index('date')[['good', 'bad']]
                 st.bar_chart(daily_chart_df)
             else:
                 st.info("Нет данных")
@@ -224,23 +210,21 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
             st.info("Нет данных")
     
     with chart_col2:
-        st.markdown("### 🏪 По тэгам (за сегодня)")
+        st.markdown("### 🏪 По отделам (за сегодня)")
         if today_dept:
             today_df = pd.DataFrame(today_dept)
             if not today_df.empty:
-                today_chart_df = today_df[['good', 'bad']].set_index('tag')
+                today_chart_df = today_df.set_index('department')[['good', 'bad']]
                 st.bar_chart(today_chart_df, horizontal=True)
             else:
                 st.info("Нет данных за сегодня")
         else:
             st.info("Нет данных за сегодня")
     
-    # Плохие ценники
     if st.session_state.bad_crops_data and len(st.session_state.bad_crops_data) > 0:
         st.markdown("---")
         st.subheader(f"🗑️ Плохие ценники ({len(st.session_state.bad_crops_data)} шт.)")
         
-        # Адаптивная сетка
         n_cols = 4
         n_rows = (len(st.session_state.bad_crops_data) + n_cols - 1) // n_cols
         
@@ -250,8 +234,11 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
                 cols = st.columns(n_cols)
             
             with cols[col_idx]:
+                caption = f"ID: {crop_data['track_id']}\nКачество: {crop_data['confidence']:.1f}%\nЦвет: {crop_data['color']}"
+                if crop_data.get('product_name') and crop_data['product_name'] != 'Товар (OCR будет позже)':
+                    caption += f"\n{crop_data['product_name']}"
                 st.image(
                     f"data:image/png;base64,{crop_data['image_base64']}",
-                    caption=f"ID: {crop_data['track_id']}\nКачество: {crop_data['confidence']:.1f}%\nЦвет: {crop_data['color']}",
+                    caption=caption,
                     use_container_width=True
                 )

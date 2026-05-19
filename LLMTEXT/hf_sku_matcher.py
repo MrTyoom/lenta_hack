@@ -12,16 +12,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 def clean_ocr_text(text: str) -> str:
     """
     Очистка OCR текста от мусора.
+    Оставляет только ключевые слова для LLM.
     
     Удаляет:
     - XML-подобные теги: <0x0A>, <F0>...
     - Специальные символы: _, ▁, emoji
     - Технические символы: <, >, hex-коды
+    - Цены, даты, баркоды
     
     Оставляет:
     - Буквы (русские + латиница)
-    - Цифры
-    - Проценты, точки, запятые, дефисы (для объемов: 0.5л, 3.2%)
+    - Цифры (только в составе слов)
+    - Проценты, точки, дефисы (для объемов: 0.5л, 3.2%)
     """
     if pd.isna(text) or text is None:
         return ""
@@ -36,13 +38,25 @@ def clean_ocr_text(text: str) -> str:
     text = text.replace('_', ' ')
     text = text.replace('▁', ' ')
     
-    # Удаление emoji и unicode символов (оставляем буквы, цифры, %, ., ,, -)
+    # Оставляем буквы, цифры, %, ., - (для объемов)
     text = re.sub(r'[^\w\sа-яА-Яa-zA-Z0-9.,%-]', ' ', text)
     
-    # Удаление множественных пробелов
+    # Удаляем множественные пробелы
     text = re.sub(r'\s+', ' ', text).strip()
     
-    return text
+    # Удаляем короткие слова (1-2 символа) - это обычно мусор
+    words = [w for w in text.split() if len(w) > 2]
+    
+    return ' '.join(words).strip()
+
+
+ARTICLE_STUBS = {'12345_678', '98765_432', '55555_333', '11111_222', '421'}
+
+
+def _is_article_stub(val):
+    if not val:
+        return True
+    return val.strip() in ARTICLE_STUBS
 
 
 class HFSKUMatcher:
@@ -169,101 +183,53 @@ class HFSKUMatcher:
         return candidates_text, valid_skus
     
     def build_prompt(self, raw_text: str, candidates_text: str) -> str:
-        """
-        Построение промпта для LLM.
-        Концептуальный поиск с учетом ошибок OCR.
-        """
-        # Очистка текста
         cleaned_text = clean_ocr_text(raw_text)
         
-        prompt = f"""Ты эксперт по анализу данных ритейла. Сопоставь **зашумленный OCR текст** с товаром из базы.
+        prompt = f"""Определи, есть ли среди кандидатов товар, соответствующий OCR тексту ценника.
 
-**ВАЖНО:**
-1. OCR может содержать ошибки, опечатки, лишние символы
-2. Ищи **КЛЮЧЕВЫЕ СЛОВА**: бренд, тип товара, объем (0.5л, 500г, 3.2%)
-3. **НЕ ТРЕБУЙ ТОЧНОГО СОВПАДЕНИЯ** - ищи концептуальное сходство
-4. Примеры ошибок OCR: "GRILL" вместо "CRISPY", "WINE" вместо "VINE", "CHOCOLATE" может быть обрезано
+OCR содержит ошибки: GRILL→CRISPY, Вина→Вино, Бело→Блеск или Белое и т.д.
+Ищи совпадение по: тип товара, бренд, объём/вес.
 
-**ПРАВИЛА ВЫБОРА:**
-- Если в OCR есть "WINE" → выбирай вино из кандидатов
-- Если в OCR есть "MILK" или "МОЛОКО" → выбирай молоко
-- Если в OCR есть "CHOCOLATE" → выбирай шоколадный продукт
-- Если в OCR есть brand name → выбирай товар этого бренда
-- Смотри на объем/вес: 1л, 500г, 0.75л
-- Если совсем ничего не понятно → None
+OCR текст: {cleaned_text}
 
-ФОРМАТ ОТВЕТА СТРОГО:
-<thinking>какие ключевые слова нашел (бренд, тип, объем), какой кандидат ближе по смыслу</thinking>
-<result>SKU или None</result>
-
-ПРИМЕР 1 (концептуальное совпадение):
-OCR: "GRILL WINE" (ошибка OCR, должно быть CRISPY)
-Кандидаты: 1. CRISPY WINE белое | SKU: 123456
-Ответ: <thinking>OCR ошибся - "GRILL" похоже на "CRISPY". Оба "WINE" - вино. Кандидат 1 подходит по концепции.</thinking>
-<result>123456</result>
-
-ПРИМЕР 2 (поиск по бренду):
-OCR: "CHOCOLATE MILK 1L"
-Кандидаты: 1. Молоко шоколадное 1л | SKU: 234567
-Ответ: <thinking>В OCR "CHOCOLATE MILK" - шоколадное молоко, объем 1л. Кандидат 1 точно подходит.</thinking>
-<result>234567</result>
-
-ПРИМЕР 3 (нет совпадений):
-OCR: "печенье овсяное"
-Кандидаты: 1. Вино красное | SKU: 345678
-Ответ: <thinking>В OCR печенье, а в кандидатах вино. Совпадений нет.</thinking>
-<result>None</result>
-
-ТЕКУЩЕЕ ЗАДАНИЕ:
-RAW_TEXT (очищенный): {cleaned_text}
-
-КАНДИДАТЫ (топ-5):
+Кандидаты:
 {candidates_text}
 
-Ответ (сначала <thinking>, потом <result>):"""
+Ответь СТРОГО в формате:
+<valid>да</valid><choice>номер кандидата</choice>
+или
+<valid>нет</valid><choice>0</choice>
+
+Ответ:"""
         return prompt
     
     def parse_response(self, response: str, valid_skus: List[str]) -> Tuple[str, str]:
-        """
-        Парсинг ответа модели.
+        is_valid = False
+        choice = 0
+        thinking_text = ""
         
-        Returns:
-            Tuple с финальным SKU и текстом размышлений
-        """
-        # Извлекаем размышления из тегов <thinking>
-        thinking_match = re.search(r'<thinking>\s*(.*?)\s*</thinking>', response, re.DOTALL | re.IGNORECASE)
-        thinking_text = thinking_match.group(1).strip() if thinking_match else "Нет размышлений"
+        valid_match = re.search(r'<valid>\s*(да|нет|yes|no)\s*</valid>', response, re.IGNORECASE)
+        if valid_match:
+            is_valid = valid_match.group(1).strip().lower() in ('да', 'yes')
         
-        # Извлекаем результат из тегов <result>
-        result_match = re.search(r'<result>\s*(.*?)\s*</result>', response, re.DOTALL | re.IGNORECASE)
-        result_text = result_match.group(1).strip() if result_match else ""
+        choice_match = re.search(r'<choice>\s*(\d+)\s*</choice>', response, re.IGNORECASE)
+        if choice_match:
+            choice = int(choice_match.group(1))
         
-        # Если теги не найдены, пробуем найти результат в конце ответа
-        if not result_text:
-            # Ищем SKU в последней строке или после слова "result"
-            lines = response.split('\n')
-            for line in reversed(lines):
-                line = line.strip()
-                if line and not line.startswith('<'):
-                    result_text = line
-                    break
-        
-        # Поиск SKU в result_text
-        found_skus = [sku for sku in valid_skus if sku in result_text]
-        if found_skus:
-            return found_skus[0], thinking_text
-        
-        # Проверка на None
-        if "none" in result_text.lower() or result_text.strip() == "" or result_text.strip().lower() == "none":
+        if not valid_match and not choice_match:
+            thinking_match = re.search(r'<thinking>\s*(.*?)\s*</thinking>', response, re.DOTALL | re.IGNORECASE)
+            thinking_text = thinking_match.group(1).strip() if thinking_match else ""
+            
+            digits = re.findall(r'\d+', response)
+            for d in digits:
+                if d in valid_skus:
+                    return d, thinking_text
             return "None", thinking_text
         
-        # Запасной вариант: ищем первое число в result_text
-        digits = re.findall(r'\d+', result_text)
-        if digits and digits[0] in valid_skus:
-            return digits[0], thinking_text
+        if is_valid and 1 <= choice <= 5 and choice <= len(valid_skus):
+            return valid_skus[choice - 1], f"Выбран кандидат {choice}"
         
-        # Если ничего не найдено - возвращаем None
-        return "None", thinking_text
+        return "None", "Нет валидного кандидата"
     
     def generate_batch(self, prompts: List[str]) -> List[str]:
         """Генерация ответов для пакета промптов"""
@@ -321,17 +287,6 @@ RAW_TEXT (очищенный): {cleaned_text}
         ocr_col: str = 'ocr_text',
         output_col: str = 'id_sku'
     ) -> pd.DataFrame:
-        """
-        Обработка dataframe с топ-5 кандидатами.
-        
-        Args:
-            df: DataFrame с колонками ocr_text/raw_text, top1-top5, top1_sku-top5_sku
-            ocr_col: Название колонки с OCR текстом
-            output_col: Название колонки для результата
-        
-        Returns:
-            DataFrame с добавленной колонкой id_sku
-        """
         self.load_model()
         
         total_rows = len(df)
@@ -346,11 +301,11 @@ RAW_TEXT (очищенный): {cleaned_text}
             batch_prompts = []
             batch_indices = []
             batch_valid_skus = []
+            batch_rows_data = []
             
             for local_idx, (_, row) in enumerate(batch_df.iterrows()):
                 global_idx = idx + local_idx
                 
-                # Получаем raw_text и очищаем
                 raw_text = str(row.get(ocr_col, row.get('raw_text', '')))
                 cleaned_text = clean_ocr_text(raw_text)
                 
@@ -360,14 +315,15 @@ RAW_TEXT (очищенный): {cleaned_text}
                     results.append({
                         'row_idx': global_idx,
                         'sku': "None",
+                        'choice': 0,
                         'thinking': "Нет валидных SKU"
                     })
                 else:
-                    # Используем очищенный текст для промпта
                     prompt = self.build_prompt(cleaned_text, candidates_text)
                     batch_prompts.append(prompt)
                     batch_indices.append(global_idx)
                     batch_valid_skus.append(valid_skus)
+                    batch_rows_data.append(row)
             
             if batch_prompts:
                 batch_responses = self.generate_batch(batch_prompts)
@@ -376,22 +332,46 @@ RAW_TEXT (очищенный): {cleaned_text}
                     global_idx = batch_indices[local_idx]
                     final_sku, thinking = self.parse_response(response, valid_skus)
                     
+                    choice = 0
+                    choice_match = re.search(r'<choice>\s*(\d+)\s*</choice>', response, re.IGNORECASE)
+                    if choice_match:
+                        choice = int(choice_match.group(1))
+                    
                     results.append({
                         'row_idx': global_idx,
                         'sku': final_sku,
+                        'choice': choice,
                         'thinking': thinking
                     })
         
         result_df = df.copy()
         sku_list = [None] * len(result_df)
         thinking_list = [None] * len(result_df)
+        product_name_list = [None] * len(result_df)
         
         for r in results:
-            sku_list[r['row_idx']] = r['sku'] if r['sku'] != "None" else None
-            thinking_list[r['row_idx']] = r['thinking']
+            idx = r['row_idx']
+            sku = r['sku'] if r['sku'] != "None" else None
+            sku_list[idx] = sku
+            thinking_list[idx] = r['thinking']
+            
+            choice = r.get('choice', 0)
+            if sku is not None and 1 <= choice <= 5:
+                top_name = result_df.iloc[idx].get(f'top{choice}')
+                if pd.notna(top_name) and str(top_name).strip():
+                    product_name_list[idx] = str(top_name).strip()
         
         result_df[output_col] = sku_list
         result_df['llm_thinking'] = thinking_list
+        result_df['llm_product_name'] = product_name_list
+        
+        article_col = 'article' if 'article' in result_df.columns else None
+        if article_col:
+            for i in range(len(result_df)):
+                if result_df.iloc[i][output_col] is None and article_col:
+                    art_val = result_df.iloc[i].get(article_col)
+                    if pd.notna(art_val) and str(art_val).strip() and not _is_article_stub(str(art_val)):
+                        result_df.iloc[i, result_df.columns.get_loc(output_col)] = str(art_val).strip()
         
         self.logger.info(f"Обработка завершена. Найдено SKU: {sum(1 for s in sku_list if s is not None)}/{total_rows}")
         
