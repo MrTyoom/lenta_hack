@@ -23,7 +23,6 @@ class CropCandidate:
     frame_index: int
     confidence: float
     bbox: List[int]
-    bbox_original: List[int] = None
 
 
 class CropScorer:
