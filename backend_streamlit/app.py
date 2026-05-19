@@ -216,7 +216,7 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
         if daily_good_bad:
             daily_df = pd.DataFrame(daily_good_bad[-7:])
             if not daily_df.empty:
-                daily_chart_df = daily_df[['good', 'bad']].set_index('date')
+                daily_chart_df = daily_df.set_index('date')[['good', 'bad']]
                 st.bar_chart(daily_chart_df)
             else:
                 st.info("Нет данных")
@@ -224,11 +224,11 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
             st.info("Нет данных")
     
     with chart_col2:
-        st.markdown("### 🏪 По тэгам (за сегодня)")
+        st.markdown("### 🏪 По отделам (за сегодня)")
         if today_dept:
             today_df = pd.DataFrame(today_dept)
             if not today_df.empty:
-                today_chart_df = today_df[['good', 'bad']].set_index('tag')
+                today_chart_df = today_df.set_index('department')[['good', 'bad']]
                 st.bar_chart(today_chart_df, horizontal=True)
             else:
                 st.info("Нет данных за сегодня")
