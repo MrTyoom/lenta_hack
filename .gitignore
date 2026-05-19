@@ -33,7 +33,7 @@ best_crops.py
 # Pickle и бинарные файлы данных
 *.pkl
 *.bin
-*.pt
+
 
 # Базы данных
 *.db
@@ -44,8 +44,7 @@ TRAKING BBOX VIDEO AND PHOTO/
 test/
 runs/
 video_output/
-models/
-# YOLO данные и результаты
+# YOLO данные и результаты (модель best.pt трекается отдельно)
 YOLO_MODULE/
 
 
@@ -53,13 +52,16 @@ YOLO_MODULE/
 DEPARTMENT CLASSIFICATION/department/
 
 
-# LLM и VLM модели/данные
-LLMTEXT/bge-m3/
-LLMTEXT/LLMTEXT/bge-m3/
+# === HF МОДЕЛИ (скачиваются автоматически, НЕ в git) ===
 **/bge-m3/
 bge-m3
 VLM_MODULE/AVITO/
 vlm_select/
+
+# === СГЕНЕРИРОВАННЫЕ КЭШИ (не в git) ===
+faiss_index*
+*.pkl
+*.log
 
 # === ОС ===
 .DS_Store
