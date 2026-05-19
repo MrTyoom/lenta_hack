@@ -10,7 +10,7 @@ __pycache__/
 *.so
 best_crops.py
 
-# === ДАННЫЕ И МЕДИА (можно перегенерировать) ===
+# === МЕДИА (не в git) ===
 # Изображения
 *.jpg
 *.jpeg
@@ -25,18 +25,22 @@ best_crops.py
 *.mkv
 *.wmv
 
-# Excel и CSV
-*.xlsx
-*.xls
-*.csv
+# === ВЫХОДНЫЕ ФАЙЛЫ (генерируются, не в git) ===
+# Результаты матчинга
+matching_result.xlsx
+match_result.xlsx
+hf_match_results.xlsx
+prefinal.xlsx
+vlm_new2.xlsx
+result.xlsx
 
-# Pickle и бинарные файлы данных
-*.pkl
-*.bin
+# CSV (генерируемые)
+result*.csv
 
-
-# Базы данных
+# Базы данных (генерируются)
 *.db
+lenta_hack.db
+lenta_products.db
 
 # === ПАПКИ С ДАННЫМИ ===
 data/
