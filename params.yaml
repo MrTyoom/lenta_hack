@@ -1,4 +1,4 @@
-is_test: true
+is_test: false
 
 main_extraction:
   input_folder: "data/25_12-20"

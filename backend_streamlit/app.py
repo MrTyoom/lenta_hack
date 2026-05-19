@@ -115,24 +115,9 @@ if uploaded_file is not None:
             
             os.unlink(temp_video_path)
             
-            df = pd.DataFrame(domain_tags)
+            df = domain_tags
             
-            bad_crops = df[df['SYS_trash'] == True].copy()
-            bad_crops_data = []
-            for _, row in bad_crops.iterrows():
-                if row.get('crop_image') is not None:
-                    bad_crops_data.append({
-                        'track_id': row['SYS_track_id'],
-                        'confidence': row['SYS_quality_confidence'],
-                        'image_base64': encode_crop_to_base64(row['crop_image']),
-                        'color': row['color'],
-                        'product_name': row.get('product_name', ''),
-                    })
-            
-            st.session_state.bad_crops_data = bad_crops_data
-            
-            if 'crop_image' in df.columns:
-                df = df.drop(columns=['crop_image'])
+            st.session_state.bad_crops_data = video_use_case.bad_crops_data
             
             st.session_state.report_df = df
             st.session_state.metrics = domain_stats
@@ -162,8 +147,8 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
     bad_crops_count = len(df[df['SYS_trash'] == True]) if 'SYS_trash' in df.columns else 0
     good_crops_count = total_crops - bad_crops_count
     
-    matched_count = len(df[df['id_sku'] != 'нет']) if 'id_sku' in df.columns else 0
-    ocr_count = len(df[df['product_name'] != 'Товар (OCR будет позже)']) if 'product_name' in df.columns else 0
+    matched_count = len(df[df['id_sku'].notna() & (df['id_sku'] != 'нет')]) if 'id_sku' in df.columns else 0
+    ocr_count = len(df[df['product_name'].notna() & (df['product_name'] != '')]) if 'product_name' in df.columns else 0
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
