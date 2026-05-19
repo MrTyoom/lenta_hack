@@ -294,17 +294,19 @@ class SqliteSessionRepository(SessionRepository):
             return [{'date': r[0], 'good': r[1], 'bad': r[2]} for r in cursor.fetchall()]
     
     def get_today_department_stats(self) -> List[Dict[str, Any]]:
-        """Статистика по отделам за сегодня (хорошие/плохие)"""
+        """Статистика по тэгам (сессиям) за сегодня"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT pt.department,
-                       COUNT(CASE WHEN pt.SYS_trash = 0 THEN 1 END) as good,
-                       COUNT(CASE WHEN pt.SYS_trash = 1 THEN 1 END) as bad
+                SELECT s.tag as tag,
+                       COUNT(DISTINCT s.id) as sessions,
+                       SUM(s.total_detections) as total,
+                       SUM(CASE WHEN pt.SYS_trash = 0 THEN 1 ELSE 0 END) as good,
+                       SUM(CASE WHEN pt.SYS_trash = 1 THEN 1 ELSE 0 END) as bad
                 FROM sessions s
-                JOIN price_tags pt ON s.id = pt.session_id
+                LEFT JOIN price_tags pt ON s.id = pt.session_id
                 WHERE DATE(s.created_at) = DATE('now')
-                GROUP BY pt.department
-                ORDER BY good DESC
+                GROUP BY s.tag
+                ORDER BY total DESC
             """)
-            return [{'department': r[0], 'good': r[1], 'bad': r[2]} for r in cursor.fetchall()]
+            return [{'tag': r[0], 'sessions': r[1], 'total': r[2], 'good': r[3], 'bad': r[4]} for r in cursor.fetchall()]

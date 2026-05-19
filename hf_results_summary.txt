@@ -1,0 +1,42 @@
+=== HF SKU MATCHER RESULTS ===
+
+Total rows: 63
+Found SKUs: 1
+Match rate: 1.6%
+
+=== SAMPLE MATCHES ===
+
+Row 0:
+  OCR: <0x0A>GRILL▁WINE▁<0xF0><0x9F><0x8D><0x87><0xF0><0x9F><0x8D><0x87><0xF0><0x9F><0x8D><0x87>
+  Top1: Вино CRISPY WINE белое полусухое
+  Top1 SKU: 726869.0
+  Final SKU: nan
+  Thinking: OCR текст "GRILL WINE" не соответствует ни одному из предложенных SKU. Все кандидаты не подходят.
+
+Row 1:
+  OCR: <0x0A>Вино▁ТОРО▁Бланко▁ординар▁белый▁сухие▁(Аргентина)▁1л
+  Top1: Вино Шираз Во Вестерн Кейп Ординар Сорт Кр Суh Юар 075Л
+  Top1 SKU: 640601.0
+  Final SKU: nan
+  Thinking: Нет размышлений
+
+Row 2:
+  OCR: <0x0A>ТОРО▁БИОЛОГИЧЕСКОЕ▁ОРГАНИЧЕСКОЕ▁БЕЗ▁ГМО▁1▁литр
+  Top1: Биойогурт ЦАРКА 2%, без змж
+  Top1 SKU: 669679.0
+  Final SKU: nan
+  Thinking: Нет размышлений
+
+Row 3:
+  OCR: <0x0A>Продукция_название
+  Top1: nan
+  Top1 SKU: nan
+  Final SKU: nan
+  Thinking: Нет валидных SKU
+
+Row 4:
+  OCR: 34▁15.09.2023<0x0A><0xF0><0x9F><0x94><0x84><0x0A>1099₽<0x0A>12345_678<0x0A>12:34▁15.09.2023<0x0A><0x
+  Top1: nan
+  Top1 SKU: nan
+  Final SKU: nan
+  Thinking: Нет валидных SKU

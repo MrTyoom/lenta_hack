@@ -31,6 +31,15 @@ class StreamlitProgressAdapter(ProgressListener):
             stage_status = "✓" if stage_percent >= 1.0 else "→"
             self.text.text(f"Этап {stage}/4: {stage_name} {stage_status} ({int(stage_percent * 100)}%)")
 
+
+def encode_crop_to_base64(crop):
+    """Конвертировать numpy array crop в base64 для отображения"""
+    if crop is None:
+        return None
+    _, buffer = cv2.imencode('.png', crop)
+    return base64.b64encode(buffer).decode('utf-8')
+
+
 st.set_page_config(page_title="Lenta Production AI", layout="wide", page_icon="🤖")
 
 MODEL_PATH = str(Path(__file__).parent.parent / "MAIN_MODULE" / "models" / "best.pt")
@@ -42,23 +51,14 @@ def init_layers():
     reader = OpenCvVideoReader()
     return detector, reader, repo
 
-st.sidebar.header("🖥️ Мониторинг системы")
 try:
     detector_infra, video_infra, repo_infra = init_layers()
-    st.sidebar.success("🟢 GPU/CPU и YOLO подключены.")
 except Exception as e:
-    st.sidebar.error("🔴 Ошибка оборудования")
     st.error(f"Ошибка инициализации: {e}")
     st.stop()
 
 video_use_case = ProcessVideoUseCase(detector_infra, video_infra, repo_infra)
 analytics_use_case = GetAnalyticsUseCase(repo_infra)
-
-# Загрузка классов отделов
-CLASS_NAMES_PATH = Path(__file__).parent.parent / "DEPARTMENT_CLASSIFICATION" / "train_model" / "models" / "class_names.json"
-with open(CLASS_NAMES_PATH, 'r', encoding='utf-8') as f:
-    ALL_DEPARTMENTS = json.load(f)
-ALL_DEPARTMENTS = sorted(ALL_DEPARTMENTS) + ["Не определён", "Свой вариант"]
 
 # Инициализация session_state
 if 'report_df' not in st.session_state:
@@ -69,8 +69,6 @@ if 'last_uploaded_file' not in st.session_state:
     st.session_state.last_uploaded_file = None
 if 'processing_done' not in st.session_state:
     st.session_state.processing_done = False
-if 'custom_dept' not in st.session_state:
-    st.session_state.custom_dept = ""
 if 'bad_crops_data' not in st.session_state:
     st.session_state.bad_crops_data = None
 if 'tag_value' not in st.session_state:
@@ -218,8 +216,7 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
         if daily_good_bad:
             daily_df = pd.DataFrame(daily_good_bad[-7:])
             if not daily_df.empty:
-                daily_df['total'] = daily_df['good'] + daily_df['bad']
-                daily_chart_df = daily_df[['date', 'good', 'bad']].set_index('date')
+                daily_chart_df = daily_df[['good', 'bad']].set_index('date')
                 st.bar_chart(daily_chart_df)
             else:
                 st.info("Нет данных")
@@ -227,12 +224,12 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
             st.info("Нет данных")
     
     with chart_col2:
-        st.markdown("### 🏪 За сегодня по отделам")
+        st.markdown("### 🏪 По тэгам (за сегодня)")
         if today_dept:
             today_df = pd.DataFrame(today_dept)
             if not today_df.empty:
-                today_df = today_df.set_index('department')
-                st.bar_chart(today_df, horizontal=True)
+                today_chart_df = today_df[['good', 'bad']].set_index('tag')
+                st.bar_chart(today_chart_df, horizontal=True)
             else:
                 st.info("Нет данных за сегодня")
         else:
@@ -258,24 +255,3 @@ if st.session_state.processing_done and st.session_state.report_df is not None:
                     caption=f"ID: {crop_data['track_id']}\nКачество: {crop_data['confidence']:.1f}%\nЦвет: {crop_data['color']}",
                     use_container_width=True
                 )
-    
-    # Историческая статистика
-    st.markdown("---")
-    st.subheader("📈 Историческая статистика")
-    
-    all_sessions = analytics_use_case.repository.get_all_sessions()
-    if all_sessions:
-        sessions_df = pd.DataFrame(all_sessions)
-        st.dataframe(sessions_df[['video_filename', 'tag', 'mode_department', 'total_detections', 'created_at']])
-        
-        dept_dist = analytics_use_case.repository.get_department_distribution()
-        if dept_dist:
-            st.subheader("Распределение по отделам (все сессии)")
-            dept_dist_df = pd.DataFrame(dept_dist)
-            st.bar_chart(dept_dist_df.set_index('department')['session_count'])
-    
-    norm_count, prob_count = analytics_use_case.repository.get_problematic_stats()
-    if norm_count > 0 or prob_count > 0:
-        st.subheader("⚖️ Качество ценников (все сессии)")
-        chart_df_1 = pd.DataFrame({'Статус': ['Корректные', 'Проблемные'], 'Количество': [norm_count, prob_count]})
-        st.bar_chart(data=chart_df_1, x='Статус', y='Количество')

@@ -9,6 +9,42 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
+def clean_ocr_text(text: str) -> str:
+    """
+    Очистка OCR текста от мусора.
+    
+    Удаляет:
+    - XML-подобные теги: <0x0A>, <F0>...
+    - Специальные символы: _, ▁, emoji
+    - Технические символы: <, >, hex-коды
+    
+    Оставляет:
+    - Буквы (русские + латиница)
+    - Цифры
+    - Проценты, точки, запятые, дефисы (для объемов: 0.5л, 3.2%)
+    """
+    if pd.isna(text) or text is None:
+        return ""
+    
+    text = str(text)
+    
+    # Удаление XML-тегов и hex-кодов
+    text = re.sub(r'<[^>]*>', ' ', text)
+    text = re.sub(r'0x[0-9A-Fa-f]+', ' ', text)
+    
+    # Удаление специальных символов
+    text = text.replace('_', ' ')
+    text = text.replace('▁', ' ')
+    
+    # Удаление emoji и unicode символов (оставляем буквы, цифры, %, ., ,, -)
+    text = re.sub(r'[^\w\sа-яА-Яa-zA-Z0-9.,%-]', ' ', text)
+    
+    # Удаление множественных пробелов
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
+
 class HFSKUMatcher:
     """
     Hugging Face LLM matcher для выбора SKU из топ-5 кандидатов.
@@ -135,27 +171,56 @@ class HFSKUMatcher:
     def build_prompt(self, raw_text: str, candidates_text: str) -> str:
         """
         Построение промпта для LLM.
-        Короткий и четкий формат для экономии токенов.
+        Концептуальный поиск с учетом ошибок OCR.
         """
-        prompt = f"""Ты эксперт по анализу данных ритейла. Сопоставь искаженный OCR текст с ценника с товаром из базы.
+        # Очистка текста
+        cleaned_text = clean_ocr_text(raw_text)
+        
+        prompt = f"""Ты эксперт по анализу данных ритейла. Сопоставь **зашумленный OCR текст** с товаром из базы.
 
-ПРАВИЛА:
-1. В raw_text может быть мусор (цены, даты, символы). Ищи реальные названия товаров.
-2. Опирайся на бренд, тип товара, объем/вес (0.5л, 500г и т.д.).
-3. Если ни один кандидат не подходит — отвечай None.
-4. Не выдумывай бренды и товары.
+**ВАЖНО:**
+1. OCR может содержать ошибки, опечатки, лишние символы
+2. Ищи **КЛЮЧЕВЫЕ СЛОВА**: бренд, тип товара, объем (0.5л, 500г, 3.2%)
+3. **НЕ ТРЕБУЙ ТОЧНОГО СОВПАДЕНИЯ** - ищи концептуальное сходство
+4. Примеры ошибок OCR: "GRILL" вместо "CRISPY", "WINE" вместо "VINE", "CHOCOLATE" может быть обрезано
+
+**ПРАВИЛА ВЫБОРА:**
+- Если в OCR есть "WINE" → выбирай вино из кандидатов
+- Если в OCR есть "MILK" или "МОЛОКО" → выбирай молоко
+- Если в OCR есть "CHOCOLATE" → выбирай шоколадный продукт
+- Если в OCR есть brand name → выбирай товар этого бренда
+- Смотри на объем/вес: 1л, 500г, 0.75л
+- Если совсем ничего не понятно → None
 
 ФОРМАТ ОТВЕТА СТРОГО:
-<thinking>краткое сравнение кандидатов</thinking>
+<thinking>какие ключевые слова нашел (бренд, тип, объем), какой кандидат ближе по смыслу</thinking>
 <result>SKU или None</result>
 
-RAW_TEXT:
-{raw_text}
+ПРИМЕР 1 (концептуальное совпадение):
+OCR: "GRILL WINE" (ошибка OCR, должно быть CRISPY)
+Кандидаты: 1. CRISPY WINE белое | SKU: 123456
+Ответ: <thinking>OCR ошибся - "GRILL" похоже на "CRISPY". Оба "WINE" - вино. Кандидат 1 подходит по концепции.</thinking>
+<result>123456</result>
+
+ПРИМЕР 2 (поиск по бренду):
+OCR: "CHOCOLATE MILK 1L"
+Кандидаты: 1. Молоко шоколадное 1л | SKU: 234567
+Ответ: <thinking>В OCR "CHOCOLATE MILK" - шоколадное молоко, объем 1л. Кандидат 1 точно подходит.</thinking>
+<result>234567</result>
+
+ПРИМЕР 3 (нет совпадений):
+OCR: "печенье овсяное"
+Кандидаты: 1. Вино красное | SKU: 345678
+Ответ: <thinking>В OCR печенье, а в кандидатах вино. Совпадений нет.</thinking>
+<result>None</result>
+
+ТЕКУЩЕЕ ЗАДАНИЕ:
+RAW_TEXT (очищенный): {cleaned_text}
 
 КАНДИДАТЫ (топ-5):
 {candidates_text}
 
-Ответ:"""
+Ответ (сначала <thinking>, потом <result>):"""
         return prompt
     
     def parse_response(self, response: str, valid_skus: List[str]) -> Tuple[str, str]:
@@ -165,23 +230,39 @@ RAW_TEXT:
         Returns:
             Tuple с финальным SKU и текстом размышлений
         """
+        # Извлекаем размышления из тегов <thinking>
         thinking_match = re.search(r'<thinking>\s*(.*?)\s*</thinking>', response, re.DOTALL | re.IGNORECASE)
         thinking_text = thinking_match.group(1).strip() if thinking_match else "Нет размышлений"
         
+        # Извлекаем результат из тегов <result>
         result_match = re.search(r'<result>\s*(.*?)\s*</result>', response, re.DOTALL | re.IGNORECASE)
-        result_text = result_match.group(1).strip() if result_match else response
+        result_text = result_match.group(1).strip() if result_match else ""
         
+        # Если теги не найдены, пробуем найти результат в конце ответа
+        if not result_text:
+            # Ищем SKU в последней строке или после слова "result"
+            lines = response.split('\n')
+            for line in reversed(lines):
+                line = line.strip()
+                if line and not line.startswith('<'):
+                    result_text = line
+                    break
+        
+        # Поиск SKU в result_text
         found_skus = [sku for sku in valid_skus if sku in result_text]
         if found_skus:
             return found_skus[0], thinking_text
         
-        if "none" in result_text.lower() or result_text.strip() == "":
+        # Проверка на None
+        if "none" in result_text.lower() or result_text.strip() == "" or result_text.strip().lower() == "none":
             return "None", thinking_text
         
+        # Запасной вариант: ищем первое число в result_text
         digits = re.findall(r'\d+', result_text)
         if digits and digits[0] in valid_skus:
             return digits[0], thinking_text
         
+        # Если ничего не найдено - возвращаем None
         return "None", thinking_text
     
     def generate_batch(self, prompts: List[str]) -> List[str]:
@@ -268,7 +349,11 @@ RAW_TEXT:
             
             for local_idx, (_, row) in enumerate(batch_df.iterrows()):
                 global_idx = idx + local_idx
+                
+                # Получаем raw_text и очищаем
                 raw_text = str(row.get(ocr_col, row.get('raw_text', '')))
+                cleaned_text = clean_ocr_text(raw_text)
+                
                 candidates_text, valid_skus = self.prepare_candidates(row)
                 
                 if not valid_skus:
@@ -278,7 +363,8 @@ RAW_TEXT:
                         'thinking': "Нет валидных SKU"
                     })
                 else:
-                    prompt = self.build_prompt(raw_text, candidates_text)
+                    # Используем очищенный текст для промпта
+                    prompt = self.build_prompt(cleaned_text, candidates_text)
                     batch_prompts.append(prompt)
                     batch_indices.append(global_idx)
                     batch_valid_skus.append(valid_skus)
