@@ -25,7 +25,7 @@ pip install -r requirements.txt
 python setup_models.py
 
 # 5. Запустить
-jupyter notebook main.ipynb
+jupyter notebook main1.ipynb
 # или
 cd backend_streamlit && streamlit run app.py
 ```
@@ -37,10 +37,10 @@ cd backend_streamlit && streamlit run app.py
 ### Вариант 1 — Jupyter Notebook (рекомендуется для разработки)
 
 ```bash
-jupyter notebook main.ipynb
+jupyter notebook main1.ipynb
 ```
 
-Ноутбук выполняет полный пайплайн:
+Основной файл проекта — `main1.ipynb`. Ноутбук выполняет полный пайплайн:
 1. Загрузка YOLO, EfficientNet (отдел), MobileNetV3 (качество)
 2. Детекция и трекинг ценников на видео
 3. Классификация отдела по полноэкранным кадрам
@@ -217,7 +217,7 @@ lenta_hack/
 │   │   ├── main.py
 │   │   ├── crop_extraction.py
 │   │   ├── distortion.py
-│   │   └── ocr_processing.py   # PaddleOCR
+│   │   └── ocr_processing.py   # PaddleOCR (не используется в main1.ipynb)
 │   └── models/best.pt         # YOLO-веса (в LFS)
 │
 ├── CROP_QUALITY_CLASSIFICATION/  # MobileNetV3: качество кропов
@@ -251,7 +251,8 @@ lenta_hack/
 ├── params.yaml               # Единый конфиг
 ├── setup_models.py           # Скачивание HF-моделей
 ├── requirements.txt          # Python-зависимости
-├── main.ipynb                # Jupyter-ноутбук
+├── main1.ipynb               # Основной Jupyter-ноутбук
+├── main.ipynb                # Черновой ноутбук
 └── match_v3.py               # Матчинг data ↔ db_hack
 ```
 
@@ -264,7 +265,7 @@ lenta_hack/
 | Детекция | YOLOv8 (Ultralytics) + ByteTrack |
 | Качество кропов | MobileNetV3-Large (PyTorch) |
 | Отдел магазина | EfficientNet-B0 (PyTorch) |
-| OCR | PaddleOCR + AvitoTech/a-vision (VLM) |
+| OCR | AvitoTech/a-vision (VLM) |
 | Эмбеддинги | deepvk/USER-bge-m3 (SentenceTransformer) |
 | Поиск | FAISS HNSW + BM25 + Levenshtein |
 | LLM-валидация | Qwen2.5-7B-Instruct (4-bit) |
